@@ -102,7 +102,7 @@ forgereview review --interactive
 
 Notes:
 - `--full` cannot be combined with `files`, `--staged`, `--commit`, or `--branch`.
-- Very large repositories may be truncated in full mode to keep local analysis stable.
+- Very large repositories are split into multiple chunks automatically in full mode.
 
 ## Other commands
 
@@ -164,7 +164,7 @@ forgereview --output <file>
 
 - `No changes to review`: there is no diff in the selected scope. Use another scope (`--staged`, `--branch`, `--commit`, `--full`).
 - `Not a git repository`: run inside a git repo or initialize one with `git init`.
-- If local Codex analysis fails on very large diffs, rerun with `--fast`, narrowed scope, or specific files.
+- If local Codex analysis is slow on large repos, rerun with `--fast`, narrowed scope, or specific files.
 
 ## License
 

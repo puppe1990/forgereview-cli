@@ -51,9 +51,9 @@ export const reviewCommand = new Command('review')
         spinner.text = chalk.cyan('Getting file changes...');
       }
 
-      let diff = await getDiff(files, options, globalOpts.verbose);
+      const diffs = await getDiffs(files, options, globalOpts.verbose);
 
-      if (!diff) {
+      if (diffs.length === 0) {
         spinner.fail(chalk.yellow('No changes to review'));
         if (globalOpts.verbose) {
           console.log(chalk.dim('[verbose] Checked scopes:'));
@@ -67,30 +67,38 @@ export const reviewCommand = new Command('review')
         return;
       }
 
-      // Enrich with project context
-      if (!globalOpts.quiet) {
-        spinner.text = chalk.cyan('Reading project context...');
+      const chunkResults: ReviewResult[] = [];
+      for (let index = 0; index < diffs.length; index++) {
+        const chunk = diffs[index];
+
+        // Enrich each diff chunk with project context.
+        if (!globalOpts.quiet) {
+          spinner.text = chalk.cyan(`Reading project context... (${index + 1}/${diffs.length})`);
+        }
+
+        if (globalOpts.verbose) {
+          console.log(chalk.dim(`[verbose] Reading project context files for chunk ${index + 1}/${diffs.length}...`));
+        }
+
+        const enrichedDiff = await contextService.enrichDiffWithContext(chunk, options.context, globalOpts.verbose);
+
+        if (!globalOpts.quiet) {
+          spinner.text = chalk.cyan(`Analyzing code... (${index + 1}/${diffs.length})`);
+        }
+
+        if (globalOpts.verbose) {
+          console.log(chalk.dim(`[verbose] Using local Codex CLI for chunk ${index + 1}/${diffs.length}`));
+        }
+
+        const chunkResult = await codexReviewService.analyze(enrichedDiff, {
+          verbose: globalOpts.verbose,
+          fast: options.fast,
+          rulesOnly: options.rulesOnly,
+        });
+        chunkResults.push(chunkResult);
       }
 
-      if (globalOpts.verbose) {
-        console.log(chalk.dim('[verbose] Reading project context files...'));
-      }
-
-      diff = await contextService.enrichDiffWithContext(diff, options.context, globalOpts.verbose);
-
-      if (!globalOpts.quiet) {
-        spinner.text = chalk.cyan('Analyzing code...');
-      }
-
-      if (globalOpts.verbose) {
-        console.log(chalk.dim('[verbose] Using local Codex CLI'));
-      }
-
-      result = await codexReviewService.analyze(diff, {
-        verbose: globalOpts.verbose,
-        fast: options.fast,
-        rulesOnly: options.rulesOnly,
-      });
+      result = mergeResults(chunkResults, diffs.length);
       const modeLabel = options.fast ? ' (fast mode)' : '';
       spinner.succeed(chalk.green(`Review complete! (Codex local mode)${modeLabel}`));
 
@@ -150,8 +158,8 @@ export const reviewCommand = new Command('review')
     }
   });
 
-async function getDiff(files: string[], options: { staged?: boolean; commit?: string; branch?: string; full?: boolean }, verbose?: boolean): Promise<string> {
-  let diff: string;
+async function getDiffs(files: string[], options: { staged?: boolean; commit?: string; branch?: string; full?: boolean }, verbose?: boolean): Promise<string[]> {
+  let diffs: string[];
 
   gitService.setVerbose(!!verbose);
 
@@ -159,46 +167,79 @@ async function getDiff(files: string[], options: { staged?: boolean; commit?: st
     if (verbose) {
       console.log(chalk.dim('[verbose] Getting full repository diff'));
     }
-    diff = await gitService.getFullRepositoryDiff();
+    diffs = await gitService.getFullRepositoryDiffChunks();
   } else if (files && files.length > 0) {
     if (verbose) {
       console.log(chalk.dim(`[verbose] Getting diff for specific files: ${files.join(', ')}`));
     }
-    diff = await gitService.getDiffForFiles(files);
+    diffs = [await gitService.getDiffForFiles(files)];
   } else if (options.branch) {
     if (verbose) {
       console.log(chalk.dim(`[verbose] Getting diff for branch: ${options.branch}`));
     }
-    diff = await gitService.getDiffForBranch(options.branch);
+    diffs = [await gitService.getDiffForBranch(options.branch)];
   } else if (options.commit) {
     if (verbose) {
       console.log(chalk.dim(`[verbose] Getting diff for commit: ${options.commit}`));
     }
-    diff = await gitService.getDiffForCommit(options.commit);
+    diffs = [await gitService.getDiffForCommit(options.commit)];
   } else if (options.staged) {
     if (verbose) {
       console.log(chalk.dim('[verbose] Getting staged diff only'));
     }
-    diff = await gitService.getStagedDiff();
+    diffs = [await gitService.getStagedDiff()];
   } else {
     if (verbose) {
       console.log(chalk.dim('[verbose] Getting working tree diff (staged + unstaged)'));
     }
-    diff = await gitService.getWorkingTreeDiff();
+    diffs = [await gitService.getWorkingTreeDiff()];
   }
 
+  const nonEmptyDiffs = diffs.map(d => d.trim()).filter(Boolean);
+
   if (verbose) {
-    console.log(chalk.dim(`[verbose] Diff result: ${diff ? `${diff.length} characters` : 'empty'}`));
-    if (!diff) {
+    const totalChars = nonEmptyDiffs.reduce((sum, d) => sum + d.length, 0);
+    console.log(chalk.dim(`[verbose] Diff chunks: ${nonEmptyDiffs.length}, total size: ${totalChars} characters`));
+    if (nonEmptyDiffs.length === 0) {
       console.log(chalk.dim('[verbose] No changes detected in the requested scope'));
     } else {
       // Show first 500 chars of diff for debugging
-      const preview = diff.substring(0, 500);
-      console.log(chalk.dim(`[verbose] Diff preview:\n${preview}${diff.length > 500 ? '\n... (truncated)' : ''}`));
+      const preview = nonEmptyDiffs[0].substring(0, 500);
+      console.log(chalk.dim(`[verbose] Diff preview (chunk 1):\n${preview}${nonEmptyDiffs[0].length > 500 ? '\n... (truncated)' : ''}`));
     }
   }
 
-  return diff;
+  return nonEmptyDiffs;
+}
+
+function mergeResults(results: ReviewResult[], chunkCount: number): ReviewResult {
+  const seen = new Set<string>();
+  const issues = [];
+  let filesAnalyzed = 0;
+  let duration = 0;
+
+  for (const result of results) {
+    filesAnalyzed += result.filesAnalyzed || 0;
+    duration += result.duration || 0;
+    for (const issue of result.issues) {
+      const key = `${issue.file}:${issue.line}:${issue.endLine || ''}:${issue.severity}:${issue.message}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        issues.push(issue);
+      }
+    }
+  }
+
+  const summary = chunkCount > 1
+    ? `Chunked full review completed (${chunkCount} chunks). Found ${issues.length} issue(s).`
+    : (results[0]?.summary || 'Review completed');
+
+  return {
+    summary,
+    issues,
+    filesAnalyzed,
+    duration,
+  };
 }
 
 function formatOutput(result: ReviewResult, format: OutputFormat): string {

@@ -171,6 +171,17 @@ class GitService {
   }
 
   async getFullRepositoryDiff(): Promise<string> {
+    const chunks = await this.getFullRepositoryDiffChunks(MAX_FULL_DIFF_CHARS);
+    const result = chunks.join('\n').trim();
+
+    if (this.verbose) {
+      console.log(chalk.dim(`[verbose] Full repository diff: ${result ? `${result.length} chars` : 'empty'}`));
+    }
+
+    return result;
+  }
+
+  async getFullRepositoryDiffChunks(maxChunkChars: number = MAX_FULL_DIFF_CHARS): Promise<string[]> {
     await this.ensureRepo();
     const root = await this.getGitRoot();
 
@@ -185,8 +196,16 @@ class GitService {
       console.log(chalk.dim(`[verbose] Full repository scan: ${allFiles.length} file(s)`));
     }
 
-    const diffs: string[] = [];
-    let totalChars = 0;
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    const flushChunk = () => {
+      const trimmed = currentChunk.trim();
+      if (trimmed) {
+        chunks.push(trimmed);
+      }
+      currentChunk = '';
+    };
 
     for (const relativeFile of allFiles) {
       const absoluteFile = path.join(root, relativeFile);
@@ -209,36 +228,35 @@ class GitService {
         });
       } catch (error: any) {
         const out = typeof error?.stdout === 'string' ? error.stdout : '';
-        if (out.trim()) {
-          const remaining = MAX_FULL_DIFF_CHARS - totalChars;
-          if (remaining <= 0) {
-            if (!this.verbose) {
-              console.log(chalk.yellow(`⚠ Full diff exceeded ${MAX_FULL_DIFF_CHARS.toLocaleString()} characters. Truncating output.`));
-            } else {
-              console.log(chalk.dim('[verbose] Full diff cap reached, stopping scan'));
-            }
-            break;
-          }
-
-          const chunk = out.length > remaining ? out.slice(0, remaining) : out;
-          diffs.push(chunk);
-          totalChars += chunk.length;
-
-          if (out.length > remaining) {
-            console.log(chalk.yellow(`⚠ Full diff exceeded ${MAX_FULL_DIFF_CHARS.toLocaleString()} characters. Truncating output.`));
-            break;
-          }
+        const patch = out.trim();
+        if (!patch) {
+          continue;
         }
+
+        if (patch.length >= maxChunkChars) {
+          if (currentChunk.trim()) {
+            flushChunk();
+          }
+          chunks.push(patch);
+          continue;
+        }
+
+        const separator = currentChunk ? '\n\n' : '';
+        if ((currentChunk.length + separator.length + patch.length) > maxChunkChars) {
+          flushChunk();
+        }
+
+        currentChunk += (currentChunk ? '\n\n' : '') + patch;
       }
     }
 
-    const result = diffs.join('\n').trim();
+    flushChunk();
 
-    if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Full repository diff: ${result ? `${result.length} chars` : 'empty'}`));
+    if (!this.verbose && chunks.length > 1) {
+      console.log(chalk.yellow(`⚠ Full repository diff split into ${chunks.length} chunks for analysis.`));
     }
 
-    return result;
+    return chunks;
   }
 
   async getModifiedFiles(): Promise<FileDiff[]> {
