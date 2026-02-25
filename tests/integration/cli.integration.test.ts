@@ -162,6 +162,7 @@ describe('CLI smoke', () => {
     const { stdout, exitCode } = await runCli(['review', '--help']);
     expect(exitCode).toBe(0);
     expect(stdout).toContain('--staged');
+    expect(stdout).toContain('--full');
     expect(stdout).toContain('--fast');
     expect(stdout).toContain('--prompt-only');
   });
@@ -232,6 +233,25 @@ describe('review integration', () => {
     } finally {
       await execFileAsync('git', ['reset', 'HEAD', 'staged.ts'], { cwd: gitRepoDir }).catch(() => {});
       await fs.unlink(path.join(gitRepoDir, 'staged.ts')).catch(() => {});
+    }
+  });
+
+  it('supports --full to review entire repository even with clean working tree', async () => {
+    const cleanRepo = await createTempGitRepo();
+    await fs.writeFile(path.join(cleanRepo, 'file.ts'), 'const x = 1;\n');
+    await execFileAsync('git', ['add', '.'], { cwd: cleanRepo });
+    await execFileAsync('git', ['commit', '-m', 'init'], { cwd: cleanRepo });
+
+    try {
+      const { exitCode } = await runCli(['review', '--full', '--fast', '--format', 'json'], { cwd: cleanRepo });
+      expect(exitCode).toBe(0);
+
+      const req = mockServer.requests.find((r) => r.url === '/cli/review');
+      expect(req).toBeDefined();
+      expect(req!.body.diff).toContain('file.ts');
+      expect(req!.body.diff).toContain('const x = 1;');
+    } finally {
+      await fs.rm(cleanRepo, { recursive: true, force: true });
     }
   });
 

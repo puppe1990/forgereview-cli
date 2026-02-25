@@ -14,11 +14,12 @@ import type { GlobalOptions, OutputFormat, ReviewResult, Severity } from '../typ
 import fs from 'fs/promises';
 
 export const reviewCommand = new Command('review')
-  .description('Analyze modified files for code review')
+  .description('Analyze code for AI review')
   .argument('[files...]', 'Specific files to analyze')
   .option('-s, --staged', 'Analyze only staged files')
   .option('-c, --commit <sha>', 'Analyze diff from a specific commit')
   .option('-b, --branch <name>', 'Compare current branch against specified branch (e.g., main)')
+  .option('--full', 'Analyze the full repository (all tracked and untracked files)')
   .option('--rules-only', 'Review using only configured rules (no general suggestions)')
   .option('--fast', 'Fast mode: quicker analysis with lighter checks')
   .option('-i, --interactive', 'Interactive mode: navigate and apply fixes')
@@ -26,7 +27,7 @@ export const reviewCommand = new Command('review')
   .option('--prompt-only', 'Output optimized for AI agents (minimal, structured)')
   .option('--fail-on <severity>', 'Exit with code 1 if issues meet or exceed severity (info, warning, error, critical)')
   .option('--context <file>', 'Custom context file to include in review')
-  .action(async (files: string[], options: { staged?: boolean; commit?: string; branch?: string; rulesOnly?: boolean; fast?: boolean; interactive?: boolean; fix?: boolean; promptOnly?: boolean; context?: string; failOn?: string }, cmd: Command) => {
+  .action(async (files: string[], options: { staged?: boolean; commit?: string; branch?: string; full?: boolean; rulesOnly?: boolean; fast?: boolean; interactive?: boolean; fix?: boolean; promptOnly?: boolean; context?: string; failOn?: string }, cmd: Command) => {
     const globalOpts = cmd.optsWithGlobals() as GlobalOptions & { staged?: boolean; commit?: string };
     const spinner = ora();
 
@@ -34,6 +35,10 @@ export const reviewCommand = new Command('review')
       // Override format if --prompt-only is set
       if (options.promptOnly) {
         globalOpts.format = 'prompt';
+      }
+
+      if (options.full && (files?.length > 0 || options.branch || options.commit || options.staged)) {
+        throw new Error('--full cannot be combined with files, --staged, --commit, or --branch');
       }
 
       let result: ReviewResult;
@@ -56,7 +61,8 @@ export const reviewCommand = new Command('review')
           console.log(chalk.dim(`  - Branch comparison: ${options.branch || 'none'}`));
           console.log(chalk.dim(`  - Commit: ${options.commit || 'none'}`));
           console.log(chalk.dim(`  - Staged only: ${options.staged ? 'yes' : 'no'}`));
-          console.log(chalk.dim(`  - Default: ${!files?.length && !options.branch && !options.commit && !options.staged ? 'working tree (staged + unstaged)' : 'no'}`));
+          console.log(chalk.dim(`  - Full repository: ${options.full ? 'yes' : 'no'}`));
+          console.log(chalk.dim(`  - Default: ${!files?.length && !options.branch && !options.commit && !options.staged && !options.full ? 'working tree (staged + unstaged)' : 'no'}`));
         }
         return;
       }
@@ -144,12 +150,17 @@ export const reviewCommand = new Command('review')
     }
   });
 
-async function getDiff(files: string[], options: { staged?: boolean; commit?: string; branch?: string }, verbose?: boolean): Promise<string> {
+async function getDiff(files: string[], options: { staged?: boolean; commit?: string; branch?: string; full?: boolean }, verbose?: boolean): Promise<string> {
   let diff: string;
 
   gitService.setVerbose(!!verbose);
 
-  if (files && files.length > 0) {
+  if (options.full) {
+    if (verbose) {
+      console.log(chalk.dim('[verbose] Getting full repository diff'));
+    }
+    diff = await gitService.getFullRepositoryDiff();
+  } else if (files && files.length > 0) {
     if (verbose) {
       console.log(chalk.dim(`[verbose] Getting diff for specific files: ${files.join(', ')}`));
     }

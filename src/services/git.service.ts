@@ -2,7 +2,12 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import fs from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { FileDiff, FileContent, GitInfo, PlatformType } from '../types/index.js';
+
+const execFileAsync = promisify(execFile);
+const MAX_FULL_DIFF_CHARS = 500_000;
 
 class GitService {
   private git: SimpleGit;
@@ -160,6 +165,77 @@ class GitService {
     
     if (this.verbose) {
       console.log(chalk.dim(`[verbose] Combined file diff: ${result ? `${result.length} chars` : 'empty'}`));
+    }
+
+    return result;
+  }
+
+  async getFullRepositoryDiff(): Promise<string> {
+    await this.ensureRepo();
+    const root = await this.getGitRoot();
+
+    const tracked = await this.git.raw(['ls-files', '-z']);
+    const untracked = await this.git.raw(['ls-files', '--others', '--exclude-standard', '-z']);
+
+    const trackedFiles = tracked.split('\0').filter(Boolean);
+    const untrackedFiles = untracked.split('\0').filter(Boolean);
+    const allFiles = Array.from(new Set([...trackedFiles, ...untrackedFiles]));
+
+    if (this.verbose) {
+      console.log(chalk.dim(`[verbose] Full repository scan: ${allFiles.length} file(s)`));
+    }
+
+    const diffs: string[] = [];
+    let totalChars = 0;
+
+    for (const relativeFile of allFiles) {
+      const absoluteFile = path.join(root, relativeFile);
+      let stat;
+      try {
+        stat = await fs.stat(absoluteFile);
+      } catch {
+        continue;
+      }
+
+      // Skip directories/symlinks to keep payload stable.
+      if (!stat.isFile()) {
+        continue;
+      }
+
+      try {
+        // --no-index returns exit code 1 when files differ, which is expected here.
+        await execFileAsync('git', ['-C', root, 'diff', '--no-index', '--', '/dev/null', relativeFile], {
+          maxBuffer: 16 * 1024 * 1024,
+        });
+      } catch (error: any) {
+        const out = typeof error?.stdout === 'string' ? error.stdout : '';
+        if (out.trim()) {
+          const remaining = MAX_FULL_DIFF_CHARS - totalChars;
+          if (remaining <= 0) {
+            if (!this.verbose) {
+              console.log(chalk.yellow(`⚠ Full diff exceeded ${MAX_FULL_DIFF_CHARS.toLocaleString()} characters. Truncating output.`));
+            } else {
+              console.log(chalk.dim('[verbose] Full diff cap reached, stopping scan'));
+            }
+            break;
+          }
+
+          const chunk = out.length > remaining ? out.slice(0, remaining) : out;
+          diffs.push(chunk);
+          totalChars += chunk.length;
+
+          if (out.length > remaining) {
+            console.log(chalk.yellow(`⚠ Full diff exceeded ${MAX_FULL_DIFF_CHARS.toLocaleString()} characters. Truncating output.`));
+            break;
+          }
+        }
+      }
+    }
+
+    const result = diffs.join('\n').trim();
+
+    if (this.verbose) {
+      console.log(chalk.dim(`[verbose] Full repository diff: ${result ? `${result.length} chars` : 'empty'}`));
     }
 
     return result;
