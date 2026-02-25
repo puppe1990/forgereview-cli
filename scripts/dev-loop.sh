@@ -26,7 +26,7 @@ run_step() {
 }
 
 run_typecheck() {
-  if npm run | grep -qE '^[[:space:]]+typecheck'; then
+  if node -e "process.exit(require('./package.json').scripts?.typecheck ? 0 : 1)"; then
     npm run typecheck
   else
     npx tsc --noEmit
