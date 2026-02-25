@@ -301,9 +301,11 @@ async function runChunks(
   const workerCount = Math.max(1, config.workers);
 
   const worker = async () => {
-    while (true) {
+    while (cursor < chunks.length) {
       const idx = cursor++;
-      if (idx >= chunks.length) break;
+      if (idx >= chunks.length) {
+        return;
+      }
       await processChunk(chunks[idx], idx + 1, chunks.length, config, state);
     }
   };
