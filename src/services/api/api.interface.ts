@@ -1,0 +1,53 @@
+import type {
+  AuthResponse,
+  ReviewConfig,
+  ReviewResult,
+  PullRequestSuggestionsResponse,
+  TrialReviewResult,
+  TrialStatus,
+  UserInfo,
+  MemoryCaptureApiRequest,
+  MemoryCaptureApiResponse,
+} from '../../types/index.js';
+
+export interface IAuthApi {
+  login(email: string, password: string): Promise<AuthResponse>;
+  refresh(refreshToken: string): Promise<AuthResponse>;
+  logout(accessToken: string): Promise<void>;
+  generateCIToken(accessToken: string): Promise<string>;
+  verify(accessToken: string): Promise<{ valid: boolean; user?: UserInfo }>;
+}
+
+export interface GitMetrics {
+  userEmail?: string;
+  gitRemote?: string;
+  branch?: string;
+  commitSha?: string;
+  inferredPlatform?: 'GITHUB' | 'GITLAB' | 'BITBUCKET' | 'AZURE_REPOS';
+  cliVersion?: string;
+}
+
+export interface IReviewApi {
+  analyze(diff: string, accessToken: string, config?: ReviewConfig): Promise<ReviewResult>;
+  analyzeWithMetrics(diff: string, accessToken: string, config?: ReviewConfig, metrics?: GitMetrics): Promise<ReviewResult>;
+  getPullRequestSuggestions(
+    accessToken: string,
+    params: { prUrl?: string; prNumber?: number; repositoryId?: string; format?: 'markdown'; severity?: string; category?: string }
+  ): Promise<PullRequestSuggestionsResponse>;
+  trialAnalyze(diff: string, fingerprint: string): Promise<TrialReviewResult>;
+}
+
+export interface ITrialApi {
+  getStatus(fingerprint: string): Promise<TrialStatus>;
+}
+
+export interface IMemoryApi {
+  submitCapture(payload: MemoryCaptureApiRequest, accessToken: string): Promise<MemoryCaptureApiResponse>;
+}
+
+export interface IForgeReviewApi {
+  auth: IAuthApi;
+  review: IReviewApi;
+  trial: ITrialApi;
+  memory: IMemoryApi;
+}

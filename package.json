@@ -1,0 +1,61 @@
+{
+  "name": "@forgereview/cli",
+  "version": "0.2.0",
+  "description": "ForgeReview CLI - AI-powered code review from your terminal",
+  "type": "module",
+  "bin": {
+    "forgereview": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/forgereviewtech/cli.git"
+  },
+  "homepage": "https://forgereview.io",
+  "bugs": {
+    "url": "https://github.com/forgereviewtech/cli/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "start:local": "FORGEREVIEW_API_URL=http://localhost:3001 node dist/index.js",
+    "start:qa": "FORGEREVIEW_API_URL=https://qa.api.forgereview.io node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "npm run build && vitest run --config vitest.integration.config.ts",
+    "lint": "eslint src --ext .ts",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "forgereview",
+    "code-review",
+    "ai",
+    "cli",
+    "git"
+  ],
+  "author": "ForgeReview",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "inquirer": "^9.2.23",
+    "node-machine-id": "^1.1.12",
+    "ora": "^8.0.1",
+    "simple-git": "^3.25.0",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.14.9",
+    "typescript": "^5.5.3",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
