@@ -10,7 +10,7 @@ import { markdownFormatter } from '../formatters/markdown.js';
 import { promptFormatter } from '../formatters/prompt.js';
 import { interactiveUI } from '../ui/interactive.js';
 import { codexReviewService } from '../services/codex-review.service.js';
-import type { GlobalOptions, OutputFormat, ReviewResult, Severity } from '../types/index.js';
+import type { GlobalOptions, OutputFormat, ReviewResult } from '../types/index.js';
 import fs from 'fs/promises';
 
 type ReviewOptions = {
@@ -78,9 +78,6 @@ export const reviewCommand = new Command('review')
       if (options.full && (files?.length > 0 || options.branch || options.commit || options.staged)) {
         throw new Error('--full cannot be combined with files, --staged, --commit, or --branch');
       }
-
-      let result: ReviewResult;
-
       if (!globalOpts.quiet) {
         spinner.start(chalk.cyan('Running with local Codex CLI...'));
       }
@@ -129,7 +126,7 @@ export const reviewCommand = new Command('review')
         allowPartial: !!options.full,
       }, runState);
 
-      result = mergeResults(runState, scope.totalFiles, scope.chunks.length, !!options.full);
+      const result = mergeResults(runState, scope.totalFiles, scope.chunks.length, !!options.full);
       const modeLabel = options.fast ? ' (fast mode)' : '';
       spinner.succeed(chalk.green(`Review complete! (Codex local mode)${modeLabel}`));
 

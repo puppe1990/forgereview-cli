@@ -50,7 +50,7 @@ while read local_ref local_sha remote_ref remote_sha; do
 
   # Only review if pushing the currently checked-out branch
   # (--branch compares against HEAD, so reviewing other refs would produce wrong diffs)
-  if [ "\$branch_name" != "\$current_branch" ]; then
+  if [ "$branch_name" != "$current_branch" ]; then
     continue
   fi
 

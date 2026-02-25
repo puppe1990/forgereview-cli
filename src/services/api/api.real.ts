@@ -125,7 +125,7 @@ function normalizeApiErrorMessage(statusCode: number, endpoint: string, errorDat
     return fallbackMessage;
   }
 
-  const hasNonAscii = /[^\x00-\x7F]/.test(trimmed);
+  const hasNonAscii = Array.from(trimmed).some((ch) => ch.charCodeAt(0) > 0x7f);
   if (hasNonAscii) {
     return fallbackMessage;
   }
