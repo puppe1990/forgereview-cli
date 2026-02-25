@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { ReviewIssue, ReviewResult, Severity, IssueCategory, CodeFix } from '../types/index.js';
+import { cliLogger } from '../utils/logger.js';
 
 const CODEX_COMMAND = process.env.FORGEREVIEW_CODEX_COMMAND || 'codex';
 
@@ -103,7 +104,7 @@ class CodexReviewService {
       const normalized = this.normalizeReviewResult(parsed, startedAt);
 
       if (options?.verbose) {
-        console.log(`[verbose] Codex CLI issues: ${normalized.issues.length}`);
+        cliLogger.verbose(`[verbose] Codex CLI issues: ${normalized.issues.length}`);
       }
 
       return normalized;

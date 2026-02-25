@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import inquirer from 'inquirer';
 import { gitService } from '../../services/git.service.js';
+import { cliLogger } from '../../utils/logger.js';
 
 const FORGEREVIEW_MARKER = '# forgereview-hook';
 
@@ -72,7 +73,7 @@ export async function installAction(options: {
 
   const isRepo = await gitService.isGitRepository();
   if (!isRepo) {
-    console.error(chalk.red('Error: Not a git repository.'));
+    cliLogger.error(chalk.red('Error: Not a git repository.'));
     process.exit(1);
   }
 
@@ -102,7 +103,7 @@ export async function installAction(options: {
       ]);
 
       if (!overwrite) {
-        console.log(chalk.yellow('Installation cancelled.'));
+        cliLogger.info(chalk.yellow('Installation cancelled.'));
         return;
       }
     }
@@ -115,13 +116,13 @@ export async function installAction(options: {
   const script = generateHookScript(failOn, fast);
   await fs.writeFile(hookPath, script, { mode: 0o755 });
 
-  console.log(chalk.green('✓ Pre-push hook installed successfully!'));
-  console.log(chalk.dim(`  Path: ${hookPath}`));
-  console.log(chalk.dim(`  Fail on: ${failOn}`));
-  console.log(chalk.dim(`  Fast mode: ${fast ? 'yes' : 'no'}`));
-  console.log('');
-  console.log(chalk.dim('Skip with: FORGEREVIEW_SKIP_HOOK=1 git push'));
-  console.log(chalk.dim('Remove with: forgereview hook uninstall'));
+  cliLogger.info(chalk.green('✓ Pre-push hook installed successfully!'));
+  cliLogger.info(chalk.dim(`  Path: ${hookPath}`));
+  cliLogger.info(chalk.dim(`  Fail on: ${failOn}`));
+  cliLogger.info(chalk.dim(`  Fast mode: ${fast ? 'yes' : 'no'}`));
+  cliLogger.info('');
+  cliLogger.info(chalk.dim('Skip with: FORGEREVIEW_SKIP_HOOK=1 git push'));
+  cliLogger.info(chalk.dim('Remove with: forgereview hook uninstall'));
 }
 
 export { FORGEREVIEW_MARKER, generateHookScript };

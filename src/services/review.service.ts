@@ -4,6 +4,7 @@ import { gitService } from './git.service.js';
 import { getTrialIdentifier } from '../utils/rate-limit.js';
 import { loadConfig } from '../utils/config.js';
 import { CLI_VERSION } from '../constants.js';
+import { cliLogger } from '../utils/logger.js';
 import chalk from 'chalk';
 import { ApiError } from '../types/index.js';
 import type { ReviewConfig, ReviewResult, TrialReviewResult, PullRequestSuggestionsResponse, ReviewIssue, ApiFileSuggestion, ApiPrLevelSuggestion, ApiSuggestionsObject, Severity, FileContent } from '../types/index.js';
@@ -28,8 +29,8 @@ class ReviewService {
     const token = await authService.getValidToken();
 
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Review config: rulesOnly=${!!rulesOnly}, fast=${!!fast}`));
-      console.log(chalk.dim(`[verbose] Diff size: ${diff.length} characters`));
+      cliLogger.verbose(chalk.dim(`[verbose] Review config: rulesOnly=${!!rulesOnly}, fast=${!!fast}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Diff size: ${diff.length} characters`));
     }
 
     const reviewConfig: ReviewConfig = {
@@ -50,10 +51,10 @@ class ReviewService {
       reviewConfig.files = this.filterFiles(allFiles);
 
       if (this.verbose) {
-        console.log(chalk.dim(`[verbose] Full file contents: ${reviewConfig.files?.length || 0} file(s)`));
+        cliLogger.verbose(chalk.dim(`[verbose] Full file contents: ${reviewConfig.files?.length || 0} file(s)`));
         if (reviewConfig.files && reviewConfig.files.length > 0) {
           reviewConfig.files.forEach(f => {
-            console.log(chalk.dim(`[verbose]   - ${f.path}: ${f.content.length} chars, status=${f.status}`));
+            cliLogger.verbose(chalk.dim(`[verbose]   - ${f.path}: ${f.content.length} chars, status=${f.status}`));
           });
         }
       }
@@ -69,11 +70,11 @@ class ReviewService {
         : undefined;
 
       if (this.verbose) {
-        console.log(chalk.dim('[verbose] Using team key with metrics'));
-        console.log(chalk.dim(`[verbose] Git info: branch=${gitInfo.branch}, remote=${gitInfo.remote}`));
-        console.log(chalk.dim('[verbose] Sending to API:'));
-        console.log(chalk.dim(`[verbose]   - diff length: ${diff.length} chars`));
-        console.log(chalk.dim(`[verbose]   - config: ${JSON.stringify(reviewConfig)}`));
+        cliLogger.verbose(chalk.dim('[verbose] Using team key with metrics'));
+        cliLogger.verbose(chalk.dim(`[verbose] Git info: branch=${gitInfo.branch}, remote=${gitInfo.remote}`));
+        cliLogger.verbose(chalk.dim('[verbose] Sending to API:'));
+        cliLogger.verbose(chalk.dim(`[verbose]   - diff length: ${diff.length} chars`));
+        cliLogger.verbose(chalk.dim(`[verbose]   - config: ${JSON.stringify(reviewConfig)}`));
       }
 
       const result = await api.review.analyzeWithMetrics(
@@ -91,32 +92,32 @@ class ReviewService {
       );
 
       if (this.verbose) {
-        console.log(chalk.dim('[verbose] API response:'));
-        console.log(chalk.dim(`[verbose]   - summary: ${result.summary}`));
-        console.log(chalk.dim(`[verbose]   - issues: ${result.issues?.length ?? 0}`));
-        console.log(chalk.dim(`[verbose]   - filesAnalyzed: ${result.filesAnalyzed}`));
+        cliLogger.verbose(chalk.dim('[verbose] API response:'));
+        cliLogger.verbose(chalk.dim(`[verbose]   - summary: ${result.summary}`));
+        cliLogger.verbose(chalk.dim(`[verbose]   - issues: ${result.issues?.length ?? 0}`));
+        cliLogger.verbose(chalk.dim(`[verbose]   - filesAnalyzed: ${result.filesAnalyzed}`));
       }
 
       return result;
     }
 
     if (this.verbose) {
-      console.log(chalk.dim('[verbose] Using personal token (no metrics)'));
+      cliLogger.verbose(chalk.dim('[verbose] Using personal token (no metrics)'));
     }
 
     if (this.verbose) {
-      console.log(chalk.dim('[verbose] Sending to API:'));
-      console.log(chalk.dim(`[verbose]   - diff length: ${diff.length} chars`));
-      console.log(chalk.dim(`[verbose]   - config: ${JSON.stringify(reviewConfig)}`));
+      cliLogger.verbose(chalk.dim('[verbose] Sending to API:'));
+      cliLogger.verbose(chalk.dim(`[verbose]   - diff length: ${diff.length} chars`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - config: ${JSON.stringify(reviewConfig)}`));
     }
 
     const result = await api.review.analyze(diff, token, reviewConfig);
 
     if (this.verbose) {
-      console.log(chalk.dim('[verbose] API response:'));
-      console.log(chalk.dim(`[verbose]   - summary: ${result.summary}`));
-      console.log(chalk.dim(`[verbose]   - issues: ${result.issues?.length ?? 0}`));
-      console.log(chalk.dim(`[verbose]   - filesAnalyzed: ${result.filesAnalyzed}`));
+      cliLogger.verbose(chalk.dim('[verbose] API response:'));
+      cliLogger.verbose(chalk.dim(`[verbose]   - summary: ${result.summary}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - issues: ${result.issues?.length ?? 0}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - filesAnalyzed: ${result.filesAnalyzed}`));
     }
 
     return result;
@@ -161,20 +162,20 @@ class ReviewService {
     const fingerprint = await getTrialIdentifier();
 
     if (this.verbose) {
-      console.log(chalk.dim('[verbose] Running trial analyze'));
-      console.log(chalk.dim(`[verbose] Diff size: ${diff.length} characters`));
+      cliLogger.verbose(chalk.dim('[verbose] Running trial analyze'));
+      cliLogger.verbose(chalk.dim(`[verbose] Diff size: ${diff.length} characters`));
       // Show diff preview
       const preview = diff.substring(0, 300);
-      console.log(chalk.dim(`[verbose] Diff preview:\n${preview}${diff.length > 300 ? '\n... (truncated)' : ''}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Diff preview:\n${preview}${diff.length > 300 ? '\n... (truncated)' : ''}`));
     }
 
     const result = await api.review.trialAnalyze(diff, fingerprint);
 
     if (this.verbose) {
-      console.log(chalk.dim('[verbose] Trial API response:'));
-      console.log(chalk.dim(`[verbose]   - summary: ${result.summary}`));
-      console.log(chalk.dim(`[verbose]   - issues: ${result.issues?.length ?? 0}`));
-      console.log(chalk.dim(`[verbose]   - filesAnalyzed: ${result.filesAnalyzed}`));
+      cliLogger.verbose(chalk.dim('[verbose] Trial API response:'));
+      cliLogger.verbose(chalk.dim(`[verbose]   - summary: ${result.summary}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - issues: ${result.issues?.length ?? 0}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - filesAnalyzed: ${result.filesAnalyzed}`));
     }
 
     return result;
@@ -245,12 +246,12 @@ class ReviewService {
     });
 
     if (skipped.length > 0) {
-      console.log(chalk.yellow(`⚠ Skipped ${skipped.length} file(s) exceeding size limits:`));
-      skipped.forEach(msg => console.log(chalk.yellow(msg)));
+      cliLogger.warn(chalk.yellow(`⚠ Skipped ${skipped.length} file(s) exceeding size limits:`));
+      skipped.forEach(msg => cliLogger.warn(chalk.yellow(msg)));
     }
 
     if (filtered.length > MAX_FILES) {
-      console.log(chalk.yellow(`⚠ Too many files (${filtered.length}), sending first ${MAX_FILES}`));
+      cliLogger.warn(chalk.yellow(`⚠ Too many files (${filtered.length}), sending first ${MAX_FILES}`));
       return filtered.slice(0, MAX_FILES);
     }
 

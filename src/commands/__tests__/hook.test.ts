@@ -116,19 +116,19 @@ describe('hook status', () => {
     const script = generateHookScript('critical', true);
     await fs.writeFile(hookPath(), script);
 
-    const consoleSpy = vi.spyOn(console, 'log');
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await statusAction();
 
-    const output = consoleSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    const output = stdoutSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('installed');
     expect(output).toContain('critical');
   });
 
   it('detects when no hook is installed', async () => {
-    const consoleSpy = vi.spyOn(console, 'log');
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     await statusAction();
 
-    const output = consoleSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    const output = stdoutSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('not installed');
   });
 });

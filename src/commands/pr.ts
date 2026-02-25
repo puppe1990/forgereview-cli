@@ -8,6 +8,7 @@ import { jsonFormatter } from '../formatters/json.js';
 import { markdownFormatter } from '../formatters/markdown.js';
 import { promptFormatter } from '../formatters/prompt.js';
 import type { GlobalOptions, OutputFormat, ReviewResult } from '../types/index.js';
+import { cliLogger } from '../utils/logger.js';
 
 export const prCommand = new Command('pr')
   .description('Pull request commands');
@@ -21,7 +22,6 @@ prCommand
 .option('--severity <list>', 'Comma-separated severities to include')
 .option('--category <list>', 'Comma-separated categories to include')
 .action(async (options: { prUrl?: string; prNumber?: string; repoId?: string; severity?: string; category?: string }, cmd: Command) => {
-
     const globalOpts = cmd.optsWithGlobals() as GlobalOptions;
     const spinner = ora();
 
@@ -33,13 +33,15 @@ prCommand
       }
 
       if (!options.prUrl && !(prNumber && options.repoId)) {
-        console.error(chalk.red('Provide --pr-url or both --pr-number and --repo-id.'));
+        cliLogger.error(chalk.red('Provide --pr-url or both --pr-number and --repo-id.'));
         process.exit(1);
       }
 
       const shouldRequestMarkdown = globalOpts.format === 'prompt' || globalOpts.format === 'markdown';
 
-      spinner.start(chalk.cyan('Fetching pull request suggestions...'));
+      if (!globalOpts.quiet) {
+        spinner.start(chalk.cyan('Fetching pull request suggestions...'));
+      }
 
       const { result, markdown } = await reviewService.getPullRequestSuggestions({
         prUrl: options.prUrl,
@@ -50,7 +52,9 @@ prCommand
         category: options.category,
       });
 
-      spinner.succeed(chalk.green('Suggestions fetched'));
+      if (!globalOpts.quiet) {
+        spinner.succeed(chalk.green('Suggestions fetched'));
+      }
 
       const output = markdown && shouldRequestMarkdown
         ? markdown
@@ -58,16 +62,18 @@ prCommand
 
       if (globalOpts.output) {
         await fs.writeFile(globalOpts.output, output, 'utf-8');
-        console.log(chalk.green(`\nOutput saved to ${globalOpts.output}`));
+        cliLogger.info(chalk.green(`\nOutput saved to ${globalOpts.output}`));
       } else {
         console.log(output);
       }
 
     } catch (error) {
-      spinner.fail(chalk.red('Failed to fetch pull request suggestions'));
+      if (!globalOpts.quiet) {
+        spinner.fail(chalk.red('Failed to fetch pull request suggestions'));
+      }
 
       if (error instanceof Error) {
-        console.error(chalk.red(error.message));
+        cliLogger.error(chalk.red(error.message));
       }
 
       process.exit(1);

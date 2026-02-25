@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { ReviewIssue, CodeFix } from '../types/index.js';
+import { cliLogger } from '../utils/logger.js';
 
 /**
  * Fix Service - Applies code fixes to files
@@ -54,7 +55,7 @@ class FixService {
     }
 
     // Sort fixes by line number (descending) to avoid line number shifts
-    for (const [file, fileIssues] of fixesByFile.entries()) {
+    for (const [, fileIssues] of fixesByFile.entries()) {
       fileIssues.sort((a, b) => (b.line || 0) - (a.line || 0));
 
       for (const issue of fileIssues) {
@@ -63,7 +64,8 @@ class FixService {
           applied++;
         } catch (error) {
           failed++;
-          console.error(`Failed to apply fix for ${issue.file}:${issue.line}`, error);
+          const details = error instanceof Error ? ` ${error.message}` : '';
+          cliLogger.error(`Failed to apply fix for ${issue.file}:${issue.line}${details}`);
         }
       }
     }

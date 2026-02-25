@@ -10,6 +10,7 @@ import { ApiError } from '../../types/index.js';
 import type { MemoryCaptureApiRequest, MemoryCaptureApiResponse } from '../../types/index.js';
 import type { IForgeReviewApi, IAuthApi, IReviewApi, ITrialApi, IMemoryApi, GitMetrics } from './api.interface.js';
 import { getDeviceIdentity, updateDeviceToken } from '../../utils/device.js';
+import { cliLogger } from '../../utils/logger.js';
 
 /**
  * Validates and returns the API base URL
@@ -29,8 +30,8 @@ function getApiBaseUrl(): string {
     // Only allow HTTPS (except localhost for development)
     const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
     if (url.protocol !== 'https:' && !isLocalhost) {
-      console.error('Security Error: FORGEREVIEW_API_URL must use HTTPS protocol');
-      console.error(`Falling back to default: ${defaultUrl}`);
+      cliLogger.error('Security Error: FORGEREVIEW_API_URL must use HTTPS protocol');
+      cliLogger.error(`Falling back to default: ${defaultUrl}`);
       return defaultUrl;
     }
 
@@ -39,13 +40,13 @@ function getApiBaseUrl(): string {
     const isStandard = standardDomains.some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`));
 
     if (!isStandard && process.env.FORGEREVIEW_VERBOSE) {
-      console.warn(`Warning: Using non-standard API URL: ${url.hostname}`);
+      cliLogger.verbose(`Warning: Using non-standard API URL: ${url.hostname}`);
     }
 
     return customUrl;
   } catch (error) {
-    console.error('Invalid FORGEREVIEW_API_URL format:', customUrl);
-    console.error(`Falling back to default: ${defaultUrl}`);
+    cliLogger.error(`Invalid FORGEREVIEW_API_URL format: ${customUrl}`);
+    cliLogger.error(`Falling back to default: ${defaultUrl}`);
     return defaultUrl;
   }
 }
@@ -140,16 +141,12 @@ async function request<T>(
   const url = `${API_BASE_URL}${endpoint}`;
   let deviceIdentity: { deviceId: string; deviceToken?: string } | undefined;
 
-  if (process.env.FORGEREVIEW_VERBOSE) {
-    console.log(`[API] ${options.method || 'GET'} ${url}`);
-  }
+  cliLogger.verbose(`[API] ${options.method || 'GET'} ${url}`);
 
   try {
     deviceIdentity = await getDeviceIdentity();
   } catch (error) {
-    if (process.env.FORGEREVIEW_VERBOSE) {
-      console.warn('[API] Unable to resolve device id:', error);
-    }
+    cliLogger.verbose(`[API] Unable to resolve device id: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   const controller = new AbortController();
@@ -197,15 +194,14 @@ async function request<T>(
         : rawError as ApiErrorPayload;
     const errorMessage = normalizeApiErrorMessage(response.status, endpoint, errorData);
 
-    if (process.env.FORGEREVIEW_VERBOSE) {
-      console.error('[API] Error:', {
-        status: response.status,
-        url,
-        contentType,
-        errorData,
-        normalizedMessage: errorMessage,
-      });
-    }
+    cliLogger.verbose({
+      msg: '[API] Error',
+      status: response.status,
+      url,
+      contentType,
+      errorData,
+      normalizedMessage: errorMessage,
+    });
 
     throw new ApiError(response.status, errorMessage);
   }
@@ -213,16 +209,16 @@ async function request<T>(
   if (!isJson) {
     const text = await response.text();
     const preview = text.substring(0, 100);
-    console.error(`[API] Expected JSON but received ${contentType || 'unknown content-type'}`);
-    console.error(`[API] URL: ${url}`);
-    console.error(`[API] Response preview: ${preview}...`);
+    cliLogger.error(`[API] Expected JSON but received ${contentType || 'unknown content-type'}`);
+    cliLogger.error(`[API] URL: ${url}`);
+    cliLogger.error(`[API] Response preview: ${preview}...`);
     throw new ApiError(500, `API returned invalid response (expected JSON, got ${contentType || 'HTML'})`);
   }
 
   const json = await response.json() as any;
 
   if (process.env.FORGEREVIEW_VERBOSE) {
-    console.log('[API] Raw response structure:', Object.keys(json));
+    cliLogger.verbose(`[API] Raw response structure: ${Object.keys(json).join(', ')}`);
     if (json && typeof json === 'object') {
       // Log key fields without logging full content (could be huge)
       const preview: Record<string, unknown> = {};
@@ -238,7 +234,7 @@ async function request<T>(
           preview[key] = val;
         }
       }
-      console.log('[API] Response preview:', JSON.stringify(preview, null, 2));
+      cliLogger.verbose(`[API] Response preview: ${JSON.stringify(preview, null, 2)}`);
     }
   }
 
@@ -276,9 +272,7 @@ async function requestWithRetry<T>(
 
       if (!isRetryable) break;
 
-      if (process.env.FORGEREVIEW_VERBOSE) {
-        console.log(`[API] Retry ${attempt + 1}/${RETRY_BACKOFF_MS.length} after ${RETRY_BACKOFF_MS[attempt]}ms`);
-      }
+      cliLogger.verbose(`[API] Retry ${attempt + 1}/${RETRY_BACKOFF_MS.length} after ${RETRY_BACKOFF_MS[attempt]}ms`);
 
       await new Promise(resolve => setTimeout(resolve, RETRY_BACKOFF_MS[attempt]));
     }
@@ -370,9 +364,7 @@ class RealAuthApi implements IAuthApi {
         },
       };
     } catch (error) {
-      if (process.env.FORGEREVIEW_VERBOSE) {
-        console.error('Token verification failed:', error);
-      }
+      cliLogger.verbose(`Token verification failed: ${error instanceof Error ? error.message : String(error)}`);
       return { valid: false };
     }
   }
@@ -382,12 +374,10 @@ class RealReviewApi implements IReviewApi {
   async analyze(diff: string, accessToken: string, config?: ReviewConfig): Promise<ReviewResult> {
     const isTeamKey = accessToken.startsWith('forgereview_');
 
-    if (process.env.FORGEREVIEW_VERBOSE) {
-      console.log('[API] analyze() called');
-      console.log(`[API]   - diff length: ${diff.length} chars`);
-      console.log(`[API]   - isTeamKey: ${isTeamKey}`);
-      console.log(`[API]   - config files: ${config?.files?.length ?? 0}`);
-    }
+    cliLogger.verbose('[API] analyze() called');
+    cliLogger.verbose(`[API]   - diff length: ${diff.length} chars`);
+    cliLogger.verbose(`[API]   - isTeamKey: ${isTeamKey}`);
+    cliLogger.verbose(`[API]   - config files: ${config?.files?.length ?? 0}`);
 
     if (isTeamKey) {
       return requestWithRetry<ReviewResult>('/cli/review', {
@@ -487,11 +477,9 @@ class RealReviewApi implements IReviewApi {
   }
 
   async trialAnalyze(diff: string, fingerprint: string): Promise<TrialReviewResult> {
-    if (process.env.FORGEREVIEW_VERBOSE) {
-      console.log('[API] trialAnalyze() called');
-      console.log(`[API]   - diff length: ${diff.length} chars`);
-      console.log(`[API]   - fingerprint: ${fingerprint.substring(0, 8)}...`);
-    }
+    cliLogger.verbose('[API] trialAnalyze() called');
+    cliLogger.verbose(`[API]   - diff length: ${diff.length} chars`);
+    cliLogger.verbose(`[API]   - fingerprint: ${fingerprint.substring(0, 8)}...`);
 
     return requestWithRetry<TrialReviewResult>('/cli/trial/review', {
       method: 'POST',

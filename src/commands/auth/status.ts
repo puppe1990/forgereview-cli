@@ -3,6 +3,7 @@ import ora from 'ora';
 import { authService } from '../../services/auth.service.js';
 import { loadConfig } from '../../utils/config.js';
 import { codexReviewService } from '../../services/codex-review.service.js';
+import { cliLogger } from '../../utils/logger.js';
 
 export async function statusAction(): Promise<void> {
   const spinner = ora();
@@ -18,22 +19,22 @@ export async function statusAction(): Promise<void> {
       const hasUserEmail = !!credentials?.user?.email;
 
       if (!hasUserEmail && hasTeamKey) {
-        console.log(chalk.bold('\nAuthentication Status\n'));
-        console.log(`${chalk.dim('Mode:')}  ${chalk.green('Team Key')}`);
-        console.log(`${chalk.dim('Organization:')} ${teamConfig?.organizationName ?? '(unknown)'}`);
-        console.log(`${chalk.dim('Team:')}         ${teamConfig?.teamName ?? '(unknown)'}`);
-        console.log(`${chalk.dim('Token:')}        ${chalk.green('Configured')}`);
+        cliLogger.info(chalk.bold('\nAuthentication Status\n'));
+        cliLogger.info(`${chalk.dim('Mode:')}  ${chalk.green('Team Key')}`);
+        cliLogger.info(`${chalk.dim('Organization:')} ${teamConfig?.organizationName ?? '(unknown)'}`);
+        cliLogger.info(`${chalk.dim('Team:')}         ${teamConfig?.teamName ?? '(unknown)'}`);
+        cliLogger.info(`${chalk.dim('Token:')}        ${chalk.green('Configured')}`);
         return;
       }
 
       if (!credentials) {
-        console.log(chalk.yellow('\nNo credentials found.'));
+        cliLogger.info(chalk.yellow('\nNo credentials found.'));
         return;
       }
       
-      console.log(chalk.bold('\nAuthentication Status\n'));
-      console.log(`${chalk.dim('Mode:')}  ${chalk.green('Logged In')}`);
-      console.log(`${chalk.dim('Email:')} ${credentials.user?.email ?? '(unknown)'}`);
+      cliLogger.info(chalk.bold('\nAuthentication Status\n'));
+      cliLogger.info(`${chalk.dim('Mode:')}  ${chalk.green('Logged In')}`);
+      cliLogger.info(`${chalk.dim('Email:')} ${credentials.user?.email ?? '(unknown)'}`);
       
       const expiresAt = new Date(credentials.expiresAt);
       const timeUntilExpiry = expiresAt.getTime() - Date.now();
@@ -41,22 +42,22 @@ export async function statusAction(): Promise<void> {
       
       if (timeUntilExpiry > 0) {
         if (hoursUntilExpiry < 1) {
-          console.log(`${chalk.dim('Token:')}  ${chalk.yellow('Expires in < 1 hour')}`);
+          cliLogger.info(`${chalk.dim('Token:')}  ${chalk.yellow('Expires in < 1 hour')}`);
         } else if (hoursUntilExpiry < 24) {
-          console.log(`${chalk.dim('Token:')}  ${chalk.yellow(`Expires in ${hoursUntilExpiry} hours`)}`);
+          cliLogger.info(`${chalk.dim('Token:')}  ${chalk.yellow(`Expires in ${hoursUntilExpiry} hours`)}`);
         } else {
-          console.log(`${chalk.dim('Token:')}  ${chalk.green('Valid')}`);
+          cliLogger.info(`${chalk.dim('Token:')}  ${chalk.green('Valid')}`);
         }
       } else {
-        console.log(`${chalk.dim('Token:')}  ${chalk.red('Expired')}`);
-        console.log(chalk.yellow('\nYour session has expired. Run `forgereview auth login` to refresh.'));
+        cliLogger.info(`${chalk.dim('Token:')}  ${chalk.red('Expired')}`);
+        cliLogger.info(chalk.yellow('\nYour session has expired. Run `forgereview auth login` to refresh.'));
         return;
       }
       
       if (credentials.user?.orgs && credentials.user.orgs.length > 0) {
-        console.log(`${chalk.dim('Organizations:')}`);
+        cliLogger.info(`${chalk.dim('Organizations:')}`);
         credentials.user.orgs.forEach((org) => {
-          console.log(`  ${chalk.dim('•')} ${org}`);
+          cliLogger.info(`  ${chalk.dim('•')} ${org}`);
         });
       }
 
@@ -65,25 +66,25 @@ export async function statusAction(): Promise<void> {
       const codexStatus = await codexReviewService.getCliStatus();
       spinner.stop();
 
-      console.log(chalk.bold('\nAuthentication Status\n'));
-      console.log(`${chalk.dim('Mode:')}           ${chalk.yellow('Local Codex')}`);
-      console.log(`${chalk.dim('ForgeReview auth:')}     ${chalk.yellow('Not configured')}`);
+      cliLogger.info(chalk.bold('\nAuthentication Status\n'));
+      cliLogger.info(`${chalk.dim('Mode:')}           ${chalk.yellow('Local Codex')}`);
+      cliLogger.info(`${chalk.dim('ForgeReview auth:')}     ${chalk.yellow('Not configured')}`);
 
       if (codexStatus.available) {
-        console.log(`${chalk.dim('Codex CLI:')}      ${chalk.green('Available')}`);
+        cliLogger.info(`${chalk.dim('Codex CLI:')}      ${chalk.green('Available')}`);
         if (codexStatus.version) {
-          console.log(`${chalk.dim('Version:')}        ${codexStatus.version}`);
+          cliLogger.info(`${chalk.dim('Version:')}        ${codexStatus.version}`);
         }
       } else {
-        console.log(`${chalk.dim('Codex CLI:')}      ${chalk.red('Not found')}`);
-        console.log(chalk.yellow('\nInstall with: npm install -g @openai/codex'));
+        cliLogger.info(`${chalk.dim('Codex CLI:')}      ${chalk.red('Not found')}`);
+        cliLogger.info(chalk.yellow('\nInstall with: npm install -g @openai/codex'));
       }
     }
 
   } catch (error) {
     spinner.fail(chalk.red('Failed to get status'));
     if (error instanceof Error) {
-      console.error(chalk.red(error.message));
+      cliLogger.error(chalk.red(error.message));
     }
     process.exit(1);
   }

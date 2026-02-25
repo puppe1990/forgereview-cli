@@ -37,7 +37,7 @@ class InteractiveUI {
     }
   }
 
-  private formatIssueTitle(issue: ReviewIssue, index: number): string {
+  private formatIssueTitle(issue: ReviewIssue): string {
     const icon = this.getSeverityIcon(issue.severity);
     const color = this.getSeverityColor(issue.severity);
     const location = chalk.cyan(`${issue.file}:${issue.line}`);

@@ -100,7 +100,7 @@ describe('auth login command', () => {
 
   it('exits with code 1 when login fails', async () => {
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     mockAuthService.isAuthenticated.mockResolvedValue(false);
     mockAuthService.login.mockRejectedValue(new Error('bad credentials'));
@@ -122,13 +122,14 @@ describe('auth logout command', () => {
   });
 
   it('prints not authenticated when there is no session', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     mockAuthService.isAuthenticated.mockResolvedValue(false);
 
     await logoutAction();
 
     expect(mockAuthService.logout).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Not authenticated.'));
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(output).toContain('Not authenticated.');
   });
 
   it('logs out when authenticated', async () => {
@@ -144,7 +145,7 @@ describe('auth logout command', () => {
 
   it('exits with code 1 when logout fails', async () => {
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     mockAuthService.isAuthenticated.mockResolvedValue(true);
     mockAuthService.logout.mockRejectedValue(new Error('network'));

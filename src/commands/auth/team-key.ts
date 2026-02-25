@@ -3,6 +3,7 @@ import { clearConfig, loadConfig, saveConfig } from '../../utils/config.js';
 import { clearCredentials } from '../../utils/credentials.js';
 import { API_URL } from '../../constants.js';
 import { getDeviceIdentity, updateDeviceToken } from '../../utils/device.js';
+import { cliLogger } from '../../utils/logger.js';
 
 interface TeamKeyErrorPayload {
   message?: string;
@@ -29,13 +30,13 @@ function getTeamKeyErrorMessage(payload: TeamKeyErrorPayload): string {
 
 export async function teamKeyAction(options: { key?: string }): Promise<void> {
   if (!options.key) {
-    console.error(chalk.red('Error: --key is required'));
-    console.log('\nGet your team key from: https://app.forgereview.io/settings/cli');
+    cliLogger.error(chalk.red('Error: --key is required'));
+    cliLogger.info('\nGet your team key from: https://app.forgereview.io/settings/cli');
     process.exit(1);
   }
 
   if (!options.key.startsWith('forgereview_')) {
-    console.error(chalk.red('Error: Invalid key format. Key should start with "forgereview_"'));
+    cliLogger.error(chalk.red('Error: Invalid key format. Key should start with "forgereview_"'));
     process.exit(1);
   }
 
@@ -86,16 +87,17 @@ export async function teamKeyAction(options: { key?: string }): Promise<void> {
       throw new Error('Failed to switch to team-key auth because personal credentials could not be cleared.');
     }
 
-    console.log(chalk.green('✓ Authenticated successfully!'));
-    console.log(chalk.cyan(`  Organization: ${organizationName}`));
-    console.log(chalk.cyan(`  Team: ${teamName}`));
+    cliLogger.info(chalk.green('✓ Authenticated successfully!'));
+    cliLogger.info(chalk.cyan(`  Organization: ${organizationName}`));
+    cliLogger.info(chalk.cyan(`  Team: ${teamName}`));
 
   } catch (error) {
-    console.error(chalk.red('✗ Authentication failed:'), error instanceof Error ? error.message : 'Unknown error');
-    console.log('\nMake sure:');
-    console.log('  1. Your key is correct');
-    console.log('  2. The key has not been revoked');
-    console.log('  3. You have internet connection');
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    cliLogger.error(chalk.red(`✗ Authentication failed: ${message}`));
+    cliLogger.info('\nMake sure:');
+    cliLogger.info('  1. Your key is correct');
+    cliLogger.info('  2. The key has not been revoked');
+    cliLogger.info('  3. You have internet connection');
     process.exit(1);
   }
 }
@@ -104,13 +106,13 @@ export async function teamStatusAction(): Promise<void> {
   const config = await loadConfig();
 
   if (!config) {
-    console.log(chalk.yellow('Not authenticated with team key'));
-    console.log('\nRun: forgereview auth team-key --key <your-key>');
-    console.log('Get your key from: https://app.forgereview.io/settings/cli');
+    cliLogger.info(chalk.yellow('Not authenticated with team key'));
+    cliLogger.info('\nRun: forgereview auth team-key --key <your-key>');
+    cliLogger.info('Get your key from: https://app.forgereview.io/settings/cli');
     return;
   }
 
-  console.log(chalk.green('✓ Authenticated'));
-  console.log(chalk.cyan(`  Organization: ${config.organizationName}`));
-  console.log(chalk.cyan(`  Team: ${config.teamName}`));
+  cliLogger.info(chalk.green('✓ Authenticated'));
+  cliLogger.info(chalk.cyan(`  Organization: ${config.organizationName}`));
+  cliLogger.info(chalk.cyan(`  Team: ${config.teamName}`));
 }

@@ -19,6 +19,7 @@ import { enableAction } from '../memory/enable.js';
 import { MERGE_HOOK_MARKER, CODEX_NOTIFY_LINE, CODEX_NOTIFY_LINE_LEGACY } from '../memory/hooks.js';
 
 let tmpDir: string;
+let stdoutSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forgereview-enable-test-'));
@@ -26,8 +27,8 @@ beforeEach(async () => {
   await fs.mkdir(path.join(tmpDir, 'src', 'commands'), { recursive: true });
   await fs.mkdir(path.join(tmpDir, 'src', 'services'), { recursive: true });
   vi.mocked(gitService.getGitRoot).mockResolvedValue(tmpDir);
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
 
 afterEach(async () => {
@@ -68,7 +69,7 @@ describe('enableAction', () => {
     await enableAction({ codexConfig });
     await enableAction({ codexConfig });
 
-    const calls = vi.mocked(console.log).mock.calls.flat().join('\n');
+    const calls = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('');
     expect(calls).toContain('already configured');
   });
 
@@ -90,7 +91,7 @@ describe('enableAction', () => {
       codexConfig: path.join(tmpDir, '.codex', 'config.toml'),
     });
 
-    const calls = vi.mocked(console.log).mock.calls.flat().join('\n');
+    const calls = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('');
     expect(calls).toContain('Codex notify: skipped');
 
     // Codex config should not exist
@@ -123,7 +124,7 @@ describe('enableAction', () => {
     const content = await fs.readFile(configPath, 'utf-8');
     expect(content).toBe('old-content');
 
-    const calls = vi.mocked(console.log).mock.calls.flat().join('\n');
+    const calls = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('');
     expect(calls).toContain('already exists');
   });
 });

@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { gitService } from '../../services/git.service.js';
 import { stringifyYaml } from '../../utils/module-matcher.js';
+import { cliLogger } from '../../utils/logger.js';
 import type { ModulesYml } from '../../types/memory.js';
 import {
   parseAgents,
@@ -22,7 +23,7 @@ interface EnableOptions {
 export async function enableAction(options: EnableOptions): Promise<void> {
   const isRepo = await gitService.isGitRepository();
   if (!isRepo) {
-    console.error(chalk.red('Error: Not a git repository.'));
+    cliLogger.error(chalk.red('Error: Not a git repository.'));
     process.exit(1);
   }
 
@@ -32,7 +33,7 @@ export async function enableAction(options: EnableOptions): Promise<void> {
   try {
     agents = parseAgents(options.agents ?? 'claude,cursor,codex');
   } catch (error) {
-    console.error(chalk.red((error as Error).message));
+    cliLogger.error(chalk.red((error as Error).message));
     process.exit(1);
     return;
   }
@@ -95,9 +96,9 @@ export async function enableAction(options: EnableOptions): Promise<void> {
   }
 
   // Summary
-  console.log(chalk.green('\u2713 Decisions enabled for this repository.'));
-  console.log(`  Claude Code / Cursor hooks: ${claudeStatus}`);
-  console.log(`  Codex notify: ${codexStatus}`);
-  console.log(`  Post-merge hook: ${mergeStatus}`);
-  console.log(`  Module config: ${modulesStatus}`);
+  cliLogger.info(chalk.green('\u2713 Decisions enabled for this repository.'));
+  cliLogger.info(`  Claude Code / Cursor hooks: ${claudeStatus}`);
+  cliLogger.info(`  Codex notify: ${codexStatus}`);
+  cliLogger.info(`  Post-merge hook: ${mergeStatus}`);
+  cliLogger.info(`  Module config: ${modulesStatus}`);
 }

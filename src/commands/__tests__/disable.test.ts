@@ -15,7 +15,7 @@ import { disableAction } from '../memory/disable.js';
 import { MERGE_HOOK_MARKER, CODEX_NOTIFY_LINE, CODEX_NOTIFY_LINE_LEGACY } from '../memory/hooks.js';
 
 let tmpDir: string;
-let originalHome: string;
+let stdoutSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forgereview-disable-test-'));
@@ -23,11 +23,10 @@ beforeEach(async () => {
   vi.mocked(gitService.getGitRoot).mockResolvedValue(tmpDir);
 
   // Override HOME so resolveCodexConfigPath points to tmpDir
-  originalHome = os.homedir();
   vi.spyOn(os, 'homedir').mockReturnValue(tmpDir);
 
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
 
 afterEach(async () => {
@@ -126,7 +125,7 @@ describe('disableAction', () => {
   it('is idempotent (disable when nothing installed reports not found)', async () => {
     await disableAction();
 
-    const calls = vi.mocked(console.log).mock.calls.flat().join('\n');
+    const calls = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('');
     expect(calls).toContain('not found');
   });
 });

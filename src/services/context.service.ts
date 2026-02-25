@@ -3,6 +3,7 @@ import path from 'path';
 import { simpleGit } from 'simple-git';
 import chalk from 'chalk';
 import type { ProjectContext } from '../types/index.js';
+import { cliLogger } from '../utils/logger.js';
 
 /**
  * Context Service - Reads project context files
@@ -118,10 +119,10 @@ class ContextService {
       if (context.customContext) contextFiles.push('custom context file');
       
       if (contextFiles.length > 0) {
-        console.log(chalk.dim(`[verbose] Found context files: ${contextFiles.join(', ')}`));
-        console.log(chalk.dim(`[verbose] Total context size: ${formattedContext.length} characters`));
+        cliLogger.verbose(chalk.dim(`[verbose] Found context files: ${contextFiles.join(', ')}`));
+        cliLogger.verbose(chalk.dim(`[verbose] Total context size: ${formattedContext.length} characters`));
       } else {
-        console.log(chalk.dim('[verbose] No context files found'));
+        cliLogger.verbose(chalk.dim('[verbose] No context files found'));
       }
     }
 

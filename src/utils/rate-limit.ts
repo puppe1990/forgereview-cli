@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { api } from '../services/api/index.js';
 import { gitService } from '../services/git.service.js';
 import type { TrialStatus } from '../types/index.js';
+import { cliLogger } from './logger.js';
 
 const { machineIdSync } = machineId;
 
@@ -48,6 +49,5 @@ ${chalk.yellow('│')}  ${chalk.dim('→')} ${chalk.cyan('forgereview auth login
 ${chalk.yellow('╰──────────────────────────────────────────────────────────╯')}
 `;
 
-  console.log(box);
+  cliLogger.info(box);
 }
-

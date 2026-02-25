@@ -38,7 +38,7 @@ describe('auth team-key command', () => {
 
   it('exits when key is missing', async () => {
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     await expect(teamKeyAction({})).rejects.toThrow('process.exit:1');
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -47,7 +47,7 @@ describe('auth team-key command', () => {
 
   it('exits when key format is invalid', async () => {
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     await expect(teamKeyAction({ key: 'invalid' })).rejects.toThrow('process.exit:1');
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -91,7 +91,7 @@ describe('auth team-key command', () => {
   it('fails and rolls back team config when clearing old credentials throws', async () => {
     const fetchMock = vi.mocked(fetch);
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -118,7 +118,7 @@ describe('auth team-key command', () => {
   it('exits when API returns invalid key', async () => {
     const fetchMock = vi.mocked(fetch);
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     fetchMock.mockResolvedValue(
       new Response(
@@ -138,7 +138,7 @@ describe('auth team-key command', () => {
   it('shows device limit message when API returns DEVICE_LIMIT_REACHED with current count', async () => {
     const fetchMock = vi.mocked(fetch);
     const exitSpy = mockProcessExit();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     fetchMock.mockResolvedValue(
       new Response(
@@ -155,7 +155,7 @@ describe('auth team-key command', () => {
 
     await expect(teamKeyAction({ key: 'forgereview_abc123' })).rejects.toThrow('process.exit:1');
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const output = errorSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    const output = errorSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('Device limit reached (2/2). Remove an old device or contact your admin.');
   });
 });
@@ -170,17 +170,17 @@ describe('auth team-status command', () => {
   });
 
   it('shows not-authenticated message when no team config exists', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     mockLoadConfig.mockResolvedValue(null);
 
     await teamStatusAction();
 
-    const output = logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('Not authenticated with team key');
   });
 
   it('shows team details when team config exists', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     mockLoadConfig.mockResolvedValue({
       teamKey: 'forgereview_abc123',
       teamName: 'Platform Team',
@@ -189,7 +189,7 @@ describe('auth team-status command', () => {
 
     await teamStatusAction();
 
-    const output = logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(output).toContain('Authenticated');
     expect(output).toContain('ForgeReview');
     expect(output).toContain('Platform Team');

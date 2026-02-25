@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import type { StoredCredentials, GitInfo, PlatformType } from '../types/index.js';
+import type { StoredCredentials } from '../types/index.js';
 
 const FORGEREVIEW_DIR = path.join(os.homedir(), '.forgereview');
 const CREDENTIALS_FILE = path.join(FORGEREVIEW_DIR, 'credentials.json');

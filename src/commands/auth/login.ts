@@ -2,6 +2,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
 import { authService } from '../../services/auth.service.js';
+import { cliLogger } from '../../utils/logger.js';
 
 interface LoginOptions {
   email?: string;
@@ -17,7 +18,7 @@ export async function loginAction(options: LoginOptions): Promise<void> {
     if (isAuthenticated && !options.email) {
       const credentials = await authService.getCredentials();
       const email = credentials?.user?.email;
-      console.log(
+      cliLogger.info(
         chalk.yellow(email ? `\nAlready logged in as ${email}` : '\nAlready authenticated with team key'),
       );
       
@@ -81,7 +82,7 @@ export async function loginAction(options: LoginOptions): Promise<void> {
     spinner.fail(chalk.red('Login failed'));
 
     if (error instanceof Error) {
-      console.error(chalk.red(error.message));
+      cliLogger.error(chalk.red(error.message));
     }
     process.exit(1);
   }

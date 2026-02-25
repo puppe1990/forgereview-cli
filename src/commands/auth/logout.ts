@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { authService } from '../../services/auth.service.js';
+import { cliLogger } from '../../utils/logger.js';
 
 export async function logoutAction(): Promise<void> {
   const spinner = ora();
@@ -9,7 +10,7 @@ export async function logoutAction(): Promise<void> {
     const isAuthenticated = await authService.isAuthenticated();
     
     if (!isAuthenticated) {
-      console.log(chalk.yellow('\nNot authenticated.'));
+      cliLogger.info(chalk.yellow('\nNot authenticated.'));
       return;
     }
 
@@ -22,7 +23,7 @@ export async function logoutAction(): Promise<void> {
   } catch (error) {
     spinner.fail(chalk.red('Logout failed'));
     if (error instanceof Error) {
-      console.error(chalk.red(error.message));
+      cliLogger.error(chalk.red(error.message));
     }
     process.exit(1);
   }

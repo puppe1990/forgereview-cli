@@ -5,6 +5,7 @@ import { api } from '../../services/api/index.js';
 import { memoryService } from '../../services/memory.service.js';
 import { transcriptParserService } from '../../services/transcript-parser.service.js';
 import type { TranscriptSignals, MemoryCaptureApiRequest } from '../../types/memory.js';
+import { cliLogger } from '../../utils/logger.js';
 
 interface CaptureOptions {
   agent: string;
@@ -54,7 +55,7 @@ export async function captureAction(payloadArg: string | undefined, options: Cap
       );
 
       if (process.env.FORGEREVIEW_VERBOSE === 'true') {
-        console.log(chalk.dim(`[memory] saved branch capture to ${filePath}`));
+        cliLogger.verbose(chalk.dim(`[memory] saved branch capture to ${filePath}`));
       }
 
       if (options.event === 'stop') {
@@ -73,14 +74,14 @@ export async function captureAction(payloadArg: string | undefined, options: Cap
       });
 
       if (process.env.FORGEREVIEW_VERBOSE === 'true') {
-        console.log(chalk.dim(`[memory] saved capture to ${filePath}`));
+        cliLogger.verbose(chalk.dim(`[memory] saved capture to ${filePath}`));
       }
     }
   } catch (error) {
     // Hooks should not block development flow.
     if (process.env.FORGEREVIEW_VERBOSE === 'true') {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(chalk.yellow(`[memory] capture skipped: ${message}`));
+      cliLogger.verbose(chalk.yellow(`[memory] capture skipped: ${message}`));
     }
   }
 }
@@ -214,6 +215,6 @@ async function submitCaptureToApi(params: SubmitCaptureParams): Promise<void> {
   const result = await api.memory.submitCapture(payload, token);
 
   if (process.env.FORGEREVIEW_VERBOSE === 'true') {
-    console.log(chalk.dim(`[memory] submitted capture to API (id=${result.id}, accepted=${result.accepted})`));
+    cliLogger.verbose(chalk.dim(`[memory] submitted capture to API (id=${result.id}, accepted=${result.accepted})`));
   }
 }
