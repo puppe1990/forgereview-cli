@@ -82,6 +82,9 @@ forgereview review --rules-only
 forgereview review --context .forgereview.md
 forgereview review --fail-on error
 forgereview review --interactive
+forgereview review --chunk-max-chars 120000
+forgereview review --chunk-timeout-ms 45000
+forgereview review --chunk-workers 2
 ```
 
 #### Flags
@@ -99,10 +102,14 @@ forgereview review --interactive
 | `--prompt-only` | Minimal structured output for AI agents |
 | `--fail-on <severity>` | Exit 1 when issues meet threshold (`info`, `warning`, `error`, `critical`) |
 | `--context <file>` | Include custom context file |
+| `--chunk-max-chars <n>` | Max characters per full-review chunk |
+| `--chunk-timeout-ms <ms>` | Timeout per chunk analysis |
+| `--chunk-workers <n>` | Parallel workers for chunk analysis |
 
 Notes:
 - `--full` cannot be combined with `files`, `--staged`, `--commit`, or `--branch`.
 - Very large repositories are split into multiple chunks automatically in full mode.
+- On chunk timeout/failure, ForgeReview splits chunks recursively and continues, returning partial results with coverage and failed files.
 
 ## Other commands
 

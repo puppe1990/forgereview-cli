@@ -73,7 +73,7 @@ interface CodexStatus {
 }
 
 class CodexReviewService {
-  async analyze(diff: string, options?: { verbose?: boolean; fast?: boolean; rulesOnly?: boolean }): Promise<ReviewResult> {
+  async analyze(diff: string, options?: { verbose?: boolean; fast?: boolean; rulesOnly?: boolean; timeoutMs?: number }): Promise<ReviewResult> {
     if (!diff.trim()) {
       return {
         summary: 'No changes to analyze',
@@ -88,7 +88,7 @@ class CodexReviewService {
 
     try {
       const prompt = this.buildPrompt(diff, options);
-      const result = await this.runCodex(prompt, schemaPath);
+      const result = await this.runCodex(prompt, schemaPath, options?.timeoutMs);
 
       if (result.code !== 0) {
         const errorOutput = [result.stderr, result.stdout].filter(Boolean).join('\n').trim();
@@ -154,7 +154,7 @@ class CodexReviewService {
       .join('\n');
   }
 
-  private async runCodex(prompt: string, schemaPath: string): Promise<ProcessResult> {
+  private async runCodex(prompt: string, schemaPath: string, timeoutMs?: number): Promise<ProcessResult> {
     return this.runCommand([
       CODEX_COMMAND,
       'exec',
@@ -164,10 +164,10 @@ class CodexReviewService {
       'never',
       '--output-schema',
       schemaPath,
-    ], prompt);
+    ], prompt, timeoutMs);
   }
 
-  private runCommand(commandAndArgs: string[], stdinInput?: string): Promise<ProcessResult> {
+  private runCommand(commandAndArgs: string[], stdinInput?: string, timeoutMs?: number): Promise<ProcessResult> {
     const [command, ...args] = commandAndArgs;
 
     return new Promise((resolve, reject) => {
@@ -182,6 +182,8 @@ class CodexReviewService {
 
       let stdout = '';
       let stderr = '';
+      let didTimeout = false;
+      let timer: NodeJS.Timeout | undefined;
 
       child.stdout.on('data', (chunk) => {
         stdout += chunk.toString();
@@ -200,8 +202,24 @@ class CodexReviewService {
       });
 
       child.on('close', (code) => {
+        if (timer) clearTimeout(timer);
+        if (didTimeout) {
+          resolve({
+            code: 124,
+            stdout,
+            stderr: `${stderr}\nCodex CLI timed out after ${timeoutMs}ms`.trim(),
+          });
+          return;
+        }
         resolve({ code: code ?? 1, stdout, stderr });
       });
+
+      if (timeoutMs && timeoutMs > 0) {
+        timer = setTimeout(() => {
+          didTimeout = true;
+          child.kill('SIGKILL');
+        }, timeoutMs);
+      }
 
       if (stdinInput !== undefined) {
         child.stdin.write(stdinInput);

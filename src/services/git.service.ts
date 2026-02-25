@@ -7,7 +7,8 @@ import { promisify } from 'node:util';
 import type { FileDiff, FileContent, GitInfo, PlatformType } from '../types/index.js';
 
 const execFileAsync = promisify(execFile);
-const MAX_FULL_DIFF_CHARS = 500_000;
+const MAX_FULL_DIFF_CHARS = 200_000;
+const MAX_FILE_PATCH_CHARS = 150_000;
 
 class GitService {
   private git: SimpleGit;
@@ -182,6 +183,45 @@ class GitService {
   }
 
   async getFullRepositoryDiffChunks(maxChunkChars: number = MAX_FULL_DIFF_CHARS): Promise<string[]> {
+    const entries = await this.getFullRepositoryFilePatches();
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    const flushChunk = () => {
+      const trimmed = currentChunk.trim();
+      if (trimmed) {
+        chunks.push(trimmed);
+      }
+      currentChunk = '';
+    };
+
+    for (const entry of entries) {
+      if (entry.patch.length >= maxChunkChars) {
+        if (currentChunk.trim()) {
+          flushChunk();
+        }
+        chunks.push(entry.patch);
+        continue;
+      }
+
+      const separator = currentChunk ? '\n\n' : '';
+      if ((currentChunk.length + separator.length + entry.patch.length) > maxChunkChars) {
+        flushChunk();
+      }
+
+      currentChunk += (currentChunk ? '\n\n' : '') + entry.patch;
+    }
+
+    flushChunk();
+
+    if (!this.verbose && chunks.length > 1) {
+      console.log(chalk.yellow(`⚠ Full repository diff split into ${chunks.length} chunks for analysis.`));
+    }
+
+    return chunks;
+  }
+
+  async getFullRepositoryFilePatches(): Promise<Array<{ file: string; patch: string }>> {
     await this.ensureRepo();
     const root = await this.getGitRoot();
 
@@ -196,16 +236,7 @@ class GitService {
       console.log(chalk.dim(`[verbose] Full repository scan: ${allFiles.length} file(s)`));
     }
 
-    const chunks: string[] = [];
-    let currentChunk = '';
-
-    const flushChunk = () => {
-      const trimmed = currentChunk.trim();
-      if (trimmed) {
-        chunks.push(trimmed);
-      }
-      currentChunk = '';
-    };
+    const entries: Array<{ file: string; patch: string }> = [];
 
     for (const relativeFile of allFiles) {
       const absoluteFile = path.join(root, relativeFile);
@@ -229,34 +260,20 @@ class GitService {
       } catch (error: any) {
         const out = typeof error?.stdout === 'string' ? error.stdout : '';
         const patch = out.trim();
-        if (!patch) {
-          continue;
-        }
+        if (!patch) continue;
 
-        if (patch.length >= maxChunkChars) {
-          if (currentChunk.trim()) {
-            flushChunk();
+        if (patch.length > MAX_FILE_PATCH_CHARS) {
+          if (!this.verbose) {
+            console.log(chalk.yellow(`⚠ Skipping oversized file patch: ${relativeFile} (${patch.length.toLocaleString()} chars)`));
           }
-          chunks.push(patch);
           continue;
         }
 
-        const separator = currentChunk ? '\n\n' : '';
-        if ((currentChunk.length + separator.length + patch.length) > maxChunkChars) {
-          flushChunk();
-        }
-
-        currentChunk += (currentChunk ? '\n\n' : '') + patch;
+        entries.push({ file: relativeFile, patch });
       }
     }
 
-    flushChunk();
-
-    if (!this.verbose && chunks.length > 1) {
-      console.log(chalk.yellow(`⚠ Full repository diff split into ${chunks.length} chunks for analysis.`));
-    }
-
-    return chunks;
+    return entries;
   }
 
   async getModifiedFiles(): Promise<FileDiff[]> {
