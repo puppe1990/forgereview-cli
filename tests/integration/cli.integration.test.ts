@@ -15,11 +15,18 @@ const CLI_PATH = path.join(PROJECT_ROOT, 'dist/index.js');
 let mockServer: MockServer;
 let tmpHome: string;
 let gitRepoDir: string;
+let mockBinDir: string;
+let mockCodexLogPath: string;
 
 interface CliResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+}
+
+interface MockCodexInvocation {
+  args: string[];
+  stdin: string;
 }
 
 function parseFirstJsonObject(output: string): any {
@@ -75,9 +82,10 @@ async function runCli(
     const { stdout, stderr } = await execFileAsync('node', [CLI_PATH, ...args], {
       cwd: opts.cwd ?? gitRepoDir,
       env: {
-        PATH: process.env.PATH,
+        PATH: `${mockBinDir}${path.delimiter}${process.env.PATH ?? ''}`,
         HOME: tmpHome,
         FORGEREVIEW_API_URL: mockServer.url,
+        FORGEREVIEW_CODEX_COMMAND: 'codex',
         NO_COLOR: '1',
         FORCE_COLOR: '0',
         NODE_NO_WARNINGS: '1',
@@ -93,6 +101,72 @@ async function runCli(
       exitCode: typeof error.code === 'number' ? error.code : 1,
     };
   }
+}
+
+async function readMockCodexInvocations(): Promise<MockCodexInvocation[]> {
+  try {
+    const content = await fs.readFile(mockCodexLogPath, 'utf-8');
+    return content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as MockCodexInvocation);
+  } catch {
+    return [];
+  }
+}
+
+async function resetMockCodexInvocations(): Promise<void> {
+  if (!mockCodexLogPath) return;
+  await fs.writeFile(mockCodexLogPath, '', 'utf-8').catch(() => {});
+}
+
+async function createMockCodexBinary(logPath: string): Promise<string> {
+  const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'forgereview-mock-codex-bin-'));
+  const scriptPath = path.join(binDir, 'codex');
+  const escapedLogPath = JSON.stringify(logPath);
+  const script = `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  process.stdout.write('codex-mock 0.0.0\\n');
+  process.exit(0);
+}
+if (args[0] === 'exec') {
+  let stdin = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => { stdin += c; });
+  process.stdin.on('end', () => {
+    fs.appendFileSync(${escapedLogPath}, JSON.stringify({ args, stdin }) + '\\n');
+    const issueCount = stdin.includes('let z = 3') ? 1 : 0;
+    const payload = {
+      summary: issueCount ? 'Mock review found 1 issue' : 'No issues found',
+      filesAnalyzed: 1,
+      issues: issueCount ? [{
+        file: 'test.ts',
+        line: 3,
+        endLine: null,
+        severity: 'warning',
+        category: 'code_quality',
+        message: 'Mock issue',
+        suggestion: 'Use const',
+        recommendation: null,
+        ruleId: 'mock-rule',
+        fixable: false,
+        fix: null
+      }] : []
+    };
+    process.stdout.write(JSON.stringify(payload));
+    process.exit(0);
+  });
+  process.stdin.resume();
+  return;
+}
+process.stderr.write('Unsupported mock codex invocation\\n');
+process.exit(1);
+`;
+  await fs.writeFile(scriptPath, script, { mode: 0o755 });
+  return binDir;
 }
 
 async function createTempGitRepo(): Promise<string> {
@@ -128,16 +202,22 @@ beforeAll(async () => {
 
   // 4. Mock API server
   mockServer = await startMockServer();
+  // 5. Mock Codex CLI for current local-review implementation
+  mockCodexLogPath = path.join(tmpHome, '.forgereview', 'mock-codex-invocations.jsonl');
+  await fs.writeFile(mockCodexLogPath, '', 'utf-8');
+  mockBinDir = await createMockCodexBinary(mockCodexLogPath);
 });
 
 afterAll(async () => {
   await mockServer?.close();
   if (tmpHome) await fs.rm(tmpHome, { recursive: true, force: true });
   if (gitRepoDir) await fs.rm(gitRepoDir, { recursive: true, force: true });
+  if (mockBinDir) await fs.rm(mockBinDir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
   mockServer.reset();
+  return resetMockCodexInvocations();
 });
 
 // ---------------------------------------------------------------------------
@@ -169,7 +249,7 @@ describe('CLI smoke', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Review command — full round-trip through mock server
+// Review command — local Codex round-trip using mock codex binary
 // ---------------------------------------------------------------------------
 describe('review integration', () => {
   it('returns JSON review result', async () => {
@@ -179,28 +259,53 @@ describe('review integration', () => {
     const json = parseFirstJsonObject(stdout);
     expect(json).toHaveProperty('summary');
     expect(json).toHaveProperty('issues');
-    expect(json.issues).toHaveLength(2);
+    expect(json.issues).toHaveLength(1);
     expect(json.filesAnalyzed).toBe(1);
-    expect(json.duration).toBe(1234);
+    expect(typeof json.duration).toBe('number');
+    expect(json.duration).toBeGreaterThan(0);
   });
 
-  it('sends X-Team-Key header when using team key', async () => {
+  it('keeps --format json output clean on stdout (operational logs may go to stderr)', async () => {
+    const { stdout, stderr, exitCode } = await runCli(['review', '--fast', '--format', 'json']);
+    expect(exitCode).toBe(0);
+
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(stderr).not.toContain('"summary"');
+    expect(stderr).not.toContain('"issues"');
+  });
+
+  it('falls back to JSON in non-interactive shell and sends warning to stderr only', async () => {
+    const { stdout, stderr, exitCode } = await runCli(['review', '--fast']);
+    expect(exitCode).toBe(0);
+
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(stderr).toContain('Non-interactive shell detected');
+    expect(stderr).not.toContain('"summary"');
+  });
+
+  it('suppresses fallback warning in quiet mode while keeping stdout JSON clean', async () => {
+    const { stdout, stderr, exitCode } = await runCli(['review', '--fast', '--quiet']);
+    expect(exitCode).toBe(0);
+
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(stderr).toBe('');
+  });
+
+  it('does not call ForgeReview review API in local Codex mode', async () => {
     await runCli(['review', '--fast', '--format', 'json']);
 
     const req = mockServer.requests.find((r) => r.url === '/cli/review');
-    expect(req).toBeDefined();
-    expect(req!.headers['x-team-key']).toBe('forgereview_test_key');
-    // Should NOT have Authorization header
-    expect(req!.headers['authorization']).toBeUndefined();
+    expect(req).toBeUndefined();
   });
 
-  it('sends diff in request body', async () => {
+  it('sends diff to codex via stdin prompt', async () => {
     await runCli(['review', '--fast', '--format', 'json']);
-
-    const req = mockServer.requests.find((r) => r.url === '/cli/review');
-    expect(req).toBeDefined();
-    expect(req!.body).toHaveProperty('diff');
-    expect(req!.body.diff).toContain('let z = 3');
+    const calls = await readMockCodexInvocations();
+    expect(calls.length).toBeGreaterThan(0);
+    const last = calls.at(-1)!;
+    expect(last.args).toContain('exec');
+    expect(last.stdin).toContain('Git diff to analyze:');
+    expect(last.stdin).toContain('let z = 3');
   });
 
   it('reports "No changes" when working tree is clean', async () => {
@@ -225,11 +330,12 @@ describe('review integration', () => {
     try {
       const { exitCode } = await runCli(['review', '--staged', '--fast', '--format', 'json']);
       expect(exitCode).toBe(0);
-
-      const req = mockServer.requests.find((r) => r.url === '/cli/review');
-      expect(req).toBeDefined();
+      const calls = await readMockCodexInvocations();
+      const stdin = calls.at(-1)?.stdin ?? '';
       // staged diff should contain the new file, NOT the unstaged test.ts change
-      expect(req!.body.diff).toContain('staged');
+      expect(stdin).toContain('staged.ts');
+      expect(stdin).toContain('const staged = true;');
+      expect(stdin).not.toContain('let z = 3');
     } finally {
       await execFileAsync('git', ['reset', 'HEAD', 'staged.ts'], { cwd: gitRepoDir }).catch(() => {});
       await fs.unlink(path.join(gitRepoDir, 'staged.ts')).catch(() => {});
@@ -245,11 +351,10 @@ describe('review integration', () => {
     try {
       const { exitCode } = await runCli(['review', '--full', '--fast', '--format', 'json'], { cwd: cleanRepo });
       expect(exitCode).toBe(0);
-
-      const req = mockServer.requests.find((r) => r.url === '/cli/review');
-      expect(req).toBeDefined();
-      expect(req!.body.diff).toContain('file.ts');
-      expect(req!.body.diff).toContain('const x = 1;');
+      const calls = await readMockCodexInvocations();
+      const stdin = calls.at(-1)?.stdin ?? '';
+      expect(stdin).toContain('file.ts');
+      expect(stdin).toContain('const x = 1;');
     } finally {
       await fs.rm(cleanRepo, { recursive: true, force: true });
     }
@@ -258,7 +363,8 @@ describe('review integration', () => {
   it('outputs markdown format', async () => {
     const { stdout, exitCode } = await runCli(['review', '--fast', '--format', 'markdown']);
     expect(exitCode).toBe(0);
-    expect(stdout).toContain('Found 2 issues');
+    expect(stdout).toContain('# Code Review Report');
+    expect(stdout).toContain('Mock review found 1 issue');
   });
 });
 
@@ -434,7 +540,6 @@ describe('decisions integration', () => {
 // ---------------------------------------------------------------------------
 describe('review --fail-on integration', () => {
   it('exits with code 1 when issues meet threshold', async () => {
-    // Mock server returns issues with severity 'warning' and 'error'
     const { exitCode } = await runCli([
       'review', '--fast', '--format', 'json', '--fail-on', 'warning',
     ]);
@@ -442,8 +547,6 @@ describe('review --fail-on integration', () => {
   });
 
   it('exits with code 0 when no issues meet threshold', async () => {
-    // Mock server returns 'warning' and 'error' severity issues
-    // Using --fail-on critical means neither meets threshold
     const { exitCode } = await runCli([
       'review', '--fast', '--format', 'json', '--fail-on', 'critical',
     ]);

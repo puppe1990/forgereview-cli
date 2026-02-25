@@ -13,6 +13,12 @@ interface UpdateCache {
   latestVersion: string;
 }
 
+interface UpdateCheckOptions {
+  format?: string;
+  quiet?: boolean;
+  output?: string;
+}
+
 export function isNewerVersion(current: string, latest: string): boolean {
   const currentParts = current.split('.').map(Number);
   const latestParts = latest.split('.').map(Number);
@@ -26,6 +32,17 @@ export function isNewerVersion(current: string, latest: string): boolean {
   }
 
   return false;
+}
+
+function printStderr(line = ''): void {
+  process.stderr.write(`${line}\n`);
+}
+
+export function shouldShowUpdateBanner(options?: UpdateCheckOptions): boolean {
+  if (options?.quiet) return false;
+  if (options?.output) return false;
+  if (options?.format && options.format !== 'terminal') return false;
+  return Boolean(process.stdout.isTTY && process.stderr.isTTY);
 }
 
 function printUpdateBanner(currentVersion: string, latestVersion: string): void {
@@ -44,14 +61,14 @@ function printUpdateBanner(currentVersion: string, latestVersion: string): void 
   const bottom = `╰${'─'.repeat(inner)}╯`;
   const empty = `│${' '.repeat(inner)}│`;
 
-  console.log();
-  console.log(chalk.yellow(top));
-  console.log(chalk.yellow(empty));
-  console.log(chalk.yellow('│') + pad(`${chalk.dim(currentVersion)} ${chalk.yellow('→')} ${chalk.green(latestVersion)}`) + chalk.yellow('│'));
-  console.log(chalk.yellow('│') + pad(chalk.cyan('Run `npm install -g @forgereview/cli`')) + chalk.yellow('│'));
-  console.log(chalk.yellow(empty));
-  console.log(chalk.yellow(bottom));
-  console.log();
+  printStderr();
+  printStderr(chalk.yellow(top));
+  printStderr(chalk.yellow(empty));
+  printStderr(chalk.yellow('│') + pad(`${chalk.dim(currentVersion)} ${chalk.yellow('→')} ${chalk.green(latestVersion)}`) + chalk.yellow('│'));
+  printStderr(chalk.yellow('│') + pad(chalk.cyan('Run `npm install -g @forgereview/cli`')) + chalk.yellow('│'));
+  printStderr(chalk.yellow(empty));
+  printStderr(chalk.yellow(bottom));
+  printStderr();
 }
 
 async function readCache(): Promise<UpdateCache | null> {
@@ -96,8 +113,12 @@ async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
-export async function checkForUpdates(currentVersion: string): Promise<void> {
+export async function checkForUpdates(currentVersion: string, options?: UpdateCheckOptions): Promise<void> {
   try {
+    if (!shouldShowUpdateBanner(options)) {
+      return;
+    }
+
     const cache = await readCache();
     const now = Date.now();
 

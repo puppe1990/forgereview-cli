@@ -13,6 +13,7 @@ import { fixService } from '../services/fix.service.js';
 import { codexReviewService } from '../services/codex-review.service.js';
 import type { GlobalOptions, OutputFormat, ReviewChunkTelemetry, ReviewIssue, ReviewResult } from '../types/index.js';
 import fs from 'fs/promises';
+import { cliLogger } from '../utils/logger.js';
 
 type ReviewOptions = {
   staged?: boolean;
@@ -53,6 +54,7 @@ interface ChunkRunState {
 
 interface ChunkExecutionConfig {
   spinner: Ora;
+  spinnerActive: boolean;
   quiet: boolean;
   verbose: boolean;
   contextFile?: string;
@@ -87,6 +89,16 @@ export const reviewCommand = new Command('review')
     const globalOpts = cmd.optsWithGlobals() as GlobalOptions & { staged?: boolean; commit?: string };
     const spinner = ora();
     const interactiveTty = isInteractiveTerminal();
+    let useSpinner = false;
+    const reportProgress = (message: string) => {
+      if (globalOpts.quiet) return;
+      if (useSpinner) {
+        spinner.text = chalk.cyan(message);
+        return;
+      }
+      // Preserve machine-readable stdout output (JSON/markdown files) and report progress on stderr.
+      cliLogger.warn(chalk.dim(message));
+    };
 
     try {
       // Override format if --prompt-only is set
@@ -101,36 +113,43 @@ export const reviewCommand = new Command('review')
       if (!interactiveTty && !globalOpts.output && globalOpts.format === 'terminal' && !options.promptOnly) {
         globalOpts.format = 'json';
         if (!globalOpts.quiet) {
-          console.error(chalk.yellow('⚠ Non-interactive shell detected. Falling back to JSON output (interactive UI disabled).'));
+          cliLogger.warn(chalk.yellow('⚠ Non-interactive shell detected. Falling back to JSON output (interactive UI disabled).'));
         }
       }
 
-      if (!globalOpts.quiet) {
+      useSpinner = !globalOpts.quiet && interactiveTty && !globalOpts.output && globalOpts.format === 'terminal';
+
+      if (useSpinner) {
         spinner.start(chalk.cyan('Running with local Codex CLI...'));
       }
 
-      if (!globalOpts.quiet) {
-        spinner.text = chalk.cyan('Getting file changes...');
-      }
+      reportProgress('Getting file changes...');
 
       const scope = await getReviewScope(files, options, globalOpts.verbose);
 
       if (scope.chunks.length === 0) {
-        spinner.fail(chalk.yellow('No changes to review'));
+        if (useSpinner) {
+          spinner.fail(chalk.yellow('No changes to review'));
+        } else if (!globalOpts.quiet) {
+          cliLogger.warn(chalk.yellow('No changes to review'));
+        }
         if (globalOpts.verbose) {
-          console.log(chalk.dim('[verbose] Checked scopes:'));
-          console.log(chalk.dim(`  - Specific files: ${files && files.length > 0 ? files.join(', ') : 'none'}`));
-          console.log(chalk.dim(`  - Branch comparison: ${options.branch || 'none'}`));
-          console.log(chalk.dim(`  - Commit: ${options.commit || 'none'}`));
-          console.log(chalk.dim(`  - Staged only: ${options.staged ? 'yes' : 'no'}`));
-          console.log(chalk.dim(`  - Full repository: ${options.full ? 'yes' : 'no'}`));
-          console.log(chalk.dim(`  - Default: ${!files?.length && !options.branch && !options.commit && !options.staged && !options.full ? 'working tree (staged + unstaged)' : 'no'}`));
+          cliLogger.verbose(chalk.dim('[verbose] Checked scopes:'));
+          cliLogger.verbose(chalk.dim(`  - Specific files: ${files && files.length > 0 ? files.join(', ') : 'none'}`));
+          cliLogger.verbose(chalk.dim(`  - Branch comparison: ${options.branch || 'none'}`));
+          cliLogger.verbose(chalk.dim(`  - Commit: ${options.commit || 'none'}`));
+          cliLogger.verbose(chalk.dim(`  - Staged only: ${options.staged ? 'yes' : 'no'}`));
+          cliLogger.verbose(chalk.dim(`  - Full repository: ${options.full ? 'yes' : 'no'}`));
+          cliLogger.verbose(chalk.dim(`  - Default: ${!files?.length && !options.branch && !options.commit && !options.staged && !options.full ? 'working tree (staged + unstaged)' : 'no'}`));
         }
         return;
       }
 
       if (!globalOpts.quiet && scope.chunks.length > 1) {
-        console.log(chalk.yellow(`⚠ Full repository diff split into ${scope.chunks.length} chunks for analysis.`));
+        cliLogger.warn(chalk.yellow(`⚠ Full repository diff split into ${scope.chunks.length} chunks for analysis.`));
+      }
+      if (scope.chunks.length > 0) {
+        reportProgress(`Analyzing ${scope.chunks.length} chunk${scope.chunks.length > 1 ? 's' : ''} with local Codex CLI...`);
       }
 
       const runState: ChunkRunState = {
@@ -144,6 +163,7 @@ export const reviewCommand = new Command('review')
 
       await runChunks(scope.chunks, {
         spinner,
+        spinnerActive: useSpinner,
         quiet: !!globalOpts.quiet,
         verbose: !!globalOpts.verbose,
         contextFile: options.context,
@@ -158,25 +178,29 @@ export const reviewCommand = new Command('review')
 
       const result = mergeResults(runState, scope.totalFiles, scope.chunks.length, !!options.full);
       const modeLabel = options.fast ? ' (fast mode)' : '';
-      spinner.succeed(chalk.green(`Review complete! (Codex local mode)${modeLabel}`));
+      if (useSpinner) {
+        spinner.succeed(chalk.green(`Review complete! (Codex local mode)${modeLabel}`));
+      }
 
       // Handle fix mode
       if (options.fix) {
         if (!interactiveTty) {
           const fixableIssues = result.issues.filter((issue) => issue.fixable && issue.fix);
           if (!globalOpts.quiet) {
-            console.log(chalk.yellow(`⚠ Non-interactive shell detected. Applying ${fixableIssues.length} fix(es) without prompt.`));
+            cliLogger.warn(chalk.yellow(`⚠ Non-interactive shell detected. Applying ${fixableIssues.length} fix(es) without prompt.`));
           }
           const applyResult = await fixService.applyFixes(fixableIssues);
           if (!globalOpts.quiet) {
-            console.log(chalk.green(`\n✓ Applied ${applyResult.applied} fixes`));
+            cliLogger.info(chalk.green(`\n✓ Applied ${applyResult.applied} fixes`));
             if (applyResult.failed > 0) {
-              console.log(chalk.yellow(`⚠ Failed to apply ${applyResult.failed} fixes`));
+              cliLogger.warn(chalk.yellow(`⚠ Failed to apply ${applyResult.failed} fixes`));
             }
           }
+          exitForFailOn(result, options.failOn);
           return;
         }
         await interactiveUI.runQuickFix(result);
+        exitForFailOn(result, options.failOn);
         return;
       }
 
@@ -188,7 +212,7 @@ export const reviewCommand = new Command('review')
         return;
       }
       if (shouldUseInteractive && !interactiveTty && !globalOpts.quiet) {
-        console.log(chalk.yellow('⚠ Interactive review UI disabled in non-interactive shell. Printing formatted output instead.'));
+        cliLogger.warn(chalk.yellow('⚠ Interactive review UI disabled in non-interactive shell. Printing formatted output instead.'));
       }
 
       // Regular output (only when --format or --output is specified)
@@ -196,7 +220,7 @@ export const reviewCommand = new Command('review')
 
       if (globalOpts.output) {
         await fs.writeFile(globalOpts.output, output, 'utf-8');
-        console.log(chalk.green(`\nOutput saved to ${globalOpts.output}`));
+        cliLogger.info(chalk.green(`\nOutput saved to ${globalOpts.output}`));
       } else if (globalOpts.format === 'terminal') {
         console.log(output);
       } else {
@@ -204,29 +228,22 @@ export const reviewCommand = new Command('review')
       }
 
       // Check --fail-on after output
-      if (options.failOn) {
-        const severityOrder: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
-        const threshold = severityOrder[options.failOn] ?? 0;
-        const hasBlockingIssues = result.issues.some(
-          (i) => (severityOrder[i.severity] ?? 0) >= threshold,
-        );
-        if (hasBlockingIssues) {
-          process.exit(1);
-        }
-      }
+      exitForFailOn(result, options.failOn);
 
     } catch (error) {
-      spinner.fail(chalk.red('Review failed'));
+      if (useSpinner) {
+        spinner.fail(chalk.red('Review failed'));
+      }
 
       if (error instanceof Error) {
-        console.error(chalk.red(error.message));
+        cliLogger.error(chalk.red(error.message));
         if (globalOpts.verbose) {
-          console.error(error.stack);
+          cliLogger.error(error.stack ?? '');
         }
       } else {
-        console.error(chalk.red('An unexpected error occurred'));
+        cliLogger.error(chalk.red('An unexpected error occurred'));
         if (globalOpts.verbose) {
-          console.error(error);
+          cliLogger.error(error);
         }
       }
       process.exit(1);
@@ -240,37 +257,37 @@ async function getReviewScope(files: string[], options: ReviewOptions, verbose?:
 
   gitService.setVerbose(!!verbose);
 
-  if (options.full) {
-    if (verbose) {
-      console.log(chalk.dim('[verbose] Getting full repository diff'));
-    }
+    if (options.full) {
+      if (verbose) {
+        cliLogger.verbose(chalk.dim('[verbose] Getting full repository diff'));
+      }
     const entries = await gitService.getFullRepositoryFilePatches();
     totalFiles = entries.length;
     chunks = buildChunks(entries, options.chunkMaxChars || 120000);
-  } else if (files && files.length > 0) {
-    if (verbose) {
-      console.log(chalk.dim(`[verbose] Getting diff for specific files: ${files.join(', ')}`));
-    }
+    } else if (files && files.length > 0) {
+      if (verbose) {
+        cliLogger.verbose(chalk.dim(`[verbose] Getting diff for specific files: ${files.join(', ')}`));
+      }
     diffs = [await gitService.getDiffForFiles(files)];
-  } else if (options.branch) {
-    if (verbose) {
-      console.log(chalk.dim(`[verbose] Getting diff for branch: ${options.branch}`));
-    }
+    } else if (options.branch) {
+      if (verbose) {
+        cliLogger.verbose(chalk.dim(`[verbose] Getting diff for branch: ${options.branch}`));
+      }
     diffs = [await gitService.getDiffForBranch(options.branch)];
-  } else if (options.commit) {
-    if (verbose) {
-      console.log(chalk.dim(`[verbose] Getting diff for commit: ${options.commit}`));
-    }
+    } else if (options.commit) {
+      if (verbose) {
+        cliLogger.verbose(chalk.dim(`[verbose] Getting diff for commit: ${options.commit}`));
+      }
     diffs = [await gitService.getDiffForCommit(options.commit)];
-  } else if (options.staged) {
-    if (verbose) {
-      console.log(chalk.dim('[verbose] Getting staged diff only'));
-    }
+    } else if (options.staged) {
+      if (verbose) {
+        cliLogger.verbose(chalk.dim('[verbose] Getting staged diff only'));
+      }
     diffs = [await gitService.getStagedDiff()];
-  } else {
-    if (verbose) {
-      console.log(chalk.dim('[verbose] Getting working tree diff (staged + unstaged)'));
-    }
+    } else {
+      if (verbose) {
+        cliLogger.verbose(chalk.dim('[verbose] Getting working tree diff (staged + unstaged)'));
+      }
     diffs = [await gitService.getWorkingTreeDiff()];
   }
 
@@ -281,13 +298,13 @@ async function getReviewScope(files: string[], options: ReviewOptions, verbose?:
 
   if (verbose) {
     const totalChars = chunks.reduce((sum, chunk) => sum + chunk.diff.length, 0);
-    console.log(chalk.dim(`[verbose] Diff chunks: ${chunks.length}, total size: ${totalChars} characters`));
+    cliLogger.verbose(chalk.dim(`[verbose] Diff chunks: ${chunks.length}, total size: ${totalChars} characters`));
     if (chunks.length === 0) {
-      console.log(chalk.dim('[verbose] No changes detected in the requested scope'));
+      cliLogger.verbose(chalk.dim('[verbose] No changes detected in the requested scope'));
     } else {
       // Show first 500 chars of diff for debugging
       const preview = chunks[0].diff.substring(0, 500);
-      console.log(chalk.dim(`[verbose] Diff preview (chunk 1):\n${preview}${chunks[0].diff.length > 500 ? '\n... (truncated)' : ''}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Diff preview (chunk 1):\n${preview}${chunks[0].diff.length > 500 ? '\n... (truncated)' : ''}`));
     }
   }
 
@@ -361,10 +378,15 @@ async function processChunk(
 ): Promise<void> {
   const chunkId = chunk.entries.map((e) => e.file).join('|') || `chunk-${position}`;
   if (!config.quiet) {
-    config.spinner.text = chalk.cyan(`Analyzing chunk ${position}/${total} (${chunk.entries.length || 1} file${(chunk.entries.length || 1) > 1 ? 's' : ''})...`);
+    const chunkMessage = `Analyzing chunk ${position}/${total} (${chunk.entries.length || 1} file${(chunk.entries.length || 1) > 1 ? 's' : ''})...`;
+    if (config.spinnerActive) {
+      config.spinner.text = chalk.cyan(chunkMessage);
+    } else {
+      cliLogger.warn(chalk.dim(chunkMessage));
+    }
   }
   if (config.verbose) {
-    console.log(chalk.dim(`[verbose] Chunk ${position}/${total} start: files=${chunk.entries.length || 0}, chars=${chunk.diff.length}, splitDepth=${splitDepth}, retries=${retries}`));
+    cliLogger.verbose(chalk.dim(`[verbose] Chunk ${position}/${total} start: files=${chunk.entries.length || 0}, chars=${chunk.diff.length}, splitDepth=${splitDepth}, retries=${retries}`));
   }
 
   const getEnrichedDiff = async (): Promise<string> => {
@@ -372,7 +394,7 @@ async function processChunk(
     const cached = config.contextCache.get(cacheKey);
     if (cached) {
       if (config.verbose) {
-        console.log(chalk.dim(`[verbose] Context cache hit for chunk ${position}/${total}`));
+        cliLogger.verbose(chalk.dim(`[verbose] Context cache hit for chunk ${position}/${total}`));
       }
       return cached;
     }
@@ -414,7 +436,7 @@ async function processChunk(
       splitDepth,
     });
     if (config.verbose) {
-      console.log(chalk.dim(`[verbose] Chunk ${position}/${total} success in ${Date.now() - startedAt}ms`));
+      cliLogger.verbose(chalk.dim(`[verbose] Chunk ${position}/${total} success in ${Date.now() - startedAt}ms`));
     }
     return;
   } catch (error) {
@@ -422,7 +444,7 @@ async function processChunk(
     const timedOut = /timed out/i.test(message);
     if (!config.quiet) {
       const kind = timedOut ? 'timeout' : 'error';
-      console.log(chalk.yellow(`⚠ Chunk ${position}/${total} ${kind}: ${chunk.entries.length} file(s), splitDepth=${splitDepth}`));
+      cliLogger.warn(chalk.yellow(`⚠ Chunk ${position}/${total} ${kind}: ${chunk.entries.length} file(s), splitDepth=${splitDepth}`));
     }
 
     if (chunk.entries.length > 1 && splitDepth < config.maxSplitDepth) {
@@ -439,7 +461,7 @@ async function processChunk(
         error: message.slice(0, 300),
       });
       if (!config.quiet) {
-        console.log(chalk.yellow(`↳ Splitting chunk ${position}/${total} into 2 subchunks (depth ${splitDepth + 1}/${config.maxSplitDepth})`));
+        cliLogger.warn(chalk.yellow(`↳ Splitting chunk ${position}/${total} into 2 subchunks (depth ${splitDepth + 1}/${config.maxSplitDepth})`));
       }
       const mid = Math.floor(chunk.entries.length / 2);
       const left = chunk.entries.slice(0, mid);
@@ -468,7 +490,7 @@ async function processChunk(
     if (timedOut && !config.fast) {
       try {
         if (!config.quiet) {
-          console.log(chalk.yellow(`↳ Retrying chunk ${position}/${total} in fast mode`));
+          cliLogger.warn(chalk.yellow(`↳ Retrying chunk ${position}/${total} in fast mode`));
         }
         const result = await execute(true);
         state.results.push(result);
@@ -506,7 +528,7 @@ async function processChunk(
           error: retryMessage.slice(0, 300),
         });
         if (config.verbose) {
-          console.log(chalk.dim(`[verbose] Chunk failed after fast retry: ${chunk.entries[0]?.file || 'unknown'} - ${retryMessage}`));
+          cliLogger.verbose(chalk.dim(`[verbose] Chunk failed after fast retry: ${chunk.entries[0]?.file || 'unknown'} - ${retryMessage}`));
         }
         return;
       }
@@ -531,7 +553,7 @@ async function processChunk(
       error: message.slice(0, 300),
     });
     if (config.verbose) {
-      console.log(chalk.dim(`[verbose] Chunk failed: ${chunk.entries[0]?.file || 'unknown'} - ${message}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Chunk failed: ${chunk.entries[0]?.file || 'unknown'} - ${message}`));
     }
   }
 }
@@ -609,6 +631,19 @@ function parsePositiveInt(value: string): number {
   return parsed;
 }
 
+function hasBlockingIssuesForFailOn(result: ReviewResult, failOn?: string): boolean {
+  if (!failOn) return false;
+  const severityOrder: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
+  const threshold = severityOrder[failOn] ?? 0;
+  return result.issues.some((i) => (severityOrder[i.severity] ?? 0) >= threshold);
+}
+
+function exitForFailOn(result: ReviewResult, failOn?: string): void {
+  if (hasBlockingIssuesForFailOn(result, failOn)) {
+    process.exit(1);
+  }
+}
+
 function isInteractiveTerminal(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
@@ -631,4 +666,5 @@ export const __reviewInternals = {
   buildChunks,
   mergeResults,
   isInteractiveTerminal,
+  hasBlockingIssuesForFailOn,
 };

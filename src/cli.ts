@@ -30,8 +30,12 @@ program.addCommand(prCommand);
 program.addCommand(hookCommand);
 program.addCommand(decisionsCommand);
 
-program.hook('postAction', async () => {
-  await checkForUpdates(pkg.version);
+program.hook('postAction', async (thisCommand, actionCommand) => {
+  const sourceCommand = actionCommand ?? thisCommand;
+  const opts = typeof sourceCommand?.optsWithGlobals === 'function'
+    ? sourceCommand.optsWithGlobals() as { format?: string; quiet?: boolean; output?: string }
+    : undefined;
+  await checkForUpdates(pkg.version, opts);
 });
 
 export { program };

@@ -89,4 +89,21 @@ describe('review chunked internals', () => {
     if (stdinDesc) Object.defineProperty(process.stdin, 'isTTY', stdinDesc);
     if (stdoutDesc) Object.defineProperty(process.stdout, 'isTTY', stdoutDesc);
   });
+
+  it('evaluates --fail-on thresholds consistently', () => {
+    const result: ReviewResult = {
+      summary: 'x',
+      filesAnalyzed: 1,
+      duration: 1,
+      issues: [
+        { file: 'a.ts', line: 1, severity: 'warning', message: 'warn', fixable: false },
+        { file: 'b.ts', line: 2, severity: 'critical', message: 'crit', fixable: false },
+      ],
+    };
+
+    expect(__reviewInternals.hasBlockingIssuesForFailOn(result, undefined)).toBe(false);
+    expect(__reviewInternals.hasBlockingIssuesForFailOn(result, 'error')).toBe(true);
+    expect(__reviewInternals.hasBlockingIssuesForFailOn(result, 'critical')).toBe(true);
+    expect(__reviewInternals.hasBlockingIssuesForFailOn(result, 'warning')).toBe(true);
+  });
 });

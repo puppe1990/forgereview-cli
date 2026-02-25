@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { FileDiff, FileContent, GitInfo, PlatformType } from '../types/index.js';
+import { cliLogger } from '../utils/logger.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_FULL_DIFF_CHARS = 200_000;
@@ -85,25 +86,34 @@ class GitService {
 
   async getWorkingTreeDiff(): Promise<string> {
     await this.ensureRepo();
+    const status = await this.git.status();
 
     if (this.verbose) {
       // Show git status first for context
-      const status = await this.git.status();
-      console.log(chalk.dim('[verbose] Git status before diff:'));
-      console.log(chalk.dim(`[verbose]   - staged: ${status.staged.length} file(s) - ${status.staged.join(', ') || 'none'}`));
-      console.log(chalk.dim(`[verbose]   - modified: ${status.modified.length} file(s) - ${status.modified.join(', ') || 'none'}`));
-      console.log(chalk.dim(`[verbose]   - not_added: ${status.not_added.length} file(s) - ${status.not_added.join(', ') || 'none'}`));
-      console.log(chalk.dim(`[verbose]   - deleted: ${status.deleted.length} file(s) - ${status.deleted.join(', ') || 'none'}`));
+      cliLogger.verbose(chalk.dim('[verbose] Git status before diff:'));
+      cliLogger.verbose(chalk.dim(`[verbose]   - staged: ${status.staged.length} file(s) - ${status.staged.join(', ') || 'none'}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - modified: ${status.modified.length} file(s) - ${status.modified.join(', ') || 'none'}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - not_added: ${status.not_added.length} file(s) - ${status.not_added.join(', ') || 'none'}`));
+      cliLogger.verbose(chalk.dim(`[verbose]   - deleted: ${status.deleted.length} file(s) - ${status.deleted.join(', ') || 'none'}`));
     }
 
     const staged = await this.git.diff(['--cached']);
     const unstaged = await this.git.diff();
-    const result = `${staged}\n${unstaged}`.trim();
+    let untrackedPatches = '';
+    if (status.not_added.length > 0) {
+      const root = await this.getGitRoot();
+      const patches = (await Promise.all(
+        status.not_added.map((file) => this.getUntrackedFilePatch(file, root)),
+      )).filter((patch): patch is string => Boolean(patch));
+      untrackedPatches = patches.join('\n\n');
+    }
+    const result = [staged, unstaged, untrackedPatches].filter(Boolean).join('\n').trim();
 
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Staged diff: ${staged ? `${staged.length} chars` : 'empty'}`));
-      console.log(chalk.dim(`[verbose] Unstaged diff: ${unstaged ? `${unstaged.length} chars` : 'empty'}`));
-      console.log(chalk.dim(`[verbose] Combined diff: ${result ? `${result.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Staged diff: ${staged ? `${staged.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Unstaged diff: ${unstaged ? `${unstaged.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Untracked diff: ${untrackedPatches ? `${untrackedPatches.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Combined diff: ${result ? `${result.length} chars` : 'empty'}`));
     }
 
     return result;
@@ -114,7 +124,7 @@ class GitService {
     const diff = await this.git.diff(['--cached']);
     
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Staged diff: ${diff ? `${diff.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Staged diff: ${diff ? `${diff.length} chars` : 'empty'}`));
     }
     
     return diff;
@@ -125,7 +135,7 @@ class GitService {
     const diff = await this.git.diff([`${commitSha}^`, commitSha]);
     
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Commit ${commitSha} diff: ${diff ? `${diff.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Commit ${commitSha} diff: ${diff ? `${diff.length} chars` : 'empty'}`));
     }
     
     return diff;
@@ -136,7 +146,7 @@ class GitService {
     const diff = await this.git.diff([`${branchName}...HEAD`]);
     
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Branch ${branchName}...HEAD diff: ${diff ? `${diff.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Branch ${branchName}...HEAD diff: ${diff ? `${diff.length} chars` : 'empty'}`));
     }
     
     return diff;
@@ -145,9 +155,12 @@ class GitService {
   async getDiffForFiles(files: string[]): Promise<string> {
     await this.ensureRepo();
     const diffs: string[] = [];
+    const root = await this.getGitRoot();
+    const status = await this.git.status();
+    const untracked = new Set(status.not_added);
     
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Getting diff for ${files.length} file(s): ${files.join(', ')}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Getting diff for ${files.length} file(s): ${files.join(', ')}`));
     }
     
     for (const file of files) {
@@ -155,17 +168,24 @@ class GitService {
       const unstagedDiff = await this.git.diff(['--', file]);
       
       if (this.verbose) {
-        console.log(chalk.dim(`[verbose]   ${file}: staged=${stagedDiff ? `${stagedDiff.length} chars` : 'empty'}, unstaged=${unstagedDiff ? `${unstagedDiff.length} chars` : 'empty'}`));
+        cliLogger.verbose(chalk.dim(`[verbose]   ${file}: staged=${stagedDiff ? `${stagedDiff.length} chars` : 'empty'}, unstaged=${unstagedDiff ? `${unstagedDiff.length} chars` : 'empty'}`));
       }
       
       if (stagedDiff) diffs.push(stagedDiff);
       if (unstagedDiff) diffs.push(unstagedDiff);
+      if (!stagedDiff && !unstagedDiff && untracked.has(file)) {
+        const untrackedPatch = await this.getUntrackedFilePatch(file, root);
+        if (this.verbose) {
+          cliLogger.verbose(chalk.dim(`[verbose]   ${file}: untracked=${untrackedPatch ? `${untrackedPatch.length} chars` : 'empty'}`));
+        }
+        if (untrackedPatch) diffs.push(untrackedPatch);
+      }
     }
 
     const result = diffs.join('\n').trim();
     
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Combined file diff: ${result ? `${result.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Combined file diff: ${result ? `${result.length} chars` : 'empty'}`));
     }
 
     return result;
@@ -176,7 +196,7 @@ class GitService {
     const result = chunks.join('\n').trim();
 
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Full repository diff: ${result ? `${result.length} chars` : 'empty'}`));
+      cliLogger.verbose(chalk.dim(`[verbose] Full repository diff: ${result ? `${result.length} chars` : 'empty'}`));
     }
 
     return result;
@@ -215,7 +235,7 @@ class GitService {
     flushChunk();
 
     if (!this.verbose && chunks.length > 1) {
-      console.log(chalk.yellow(`⚠ Full repository diff split into ${chunks.length} chunks for analysis.`));
+      cliLogger.warn(chalk.yellow(`⚠ Full repository diff split into ${chunks.length} chunks for analysis.`));
     }
 
     return chunks;
@@ -233,7 +253,7 @@ class GitService {
     const allFiles = Array.from(new Set([...trackedFiles, ...untrackedFiles]));
 
     if (this.verbose) {
-      console.log(chalk.dim(`[verbose] Full repository scan: ${allFiles.length} file(s)`));
+      cliLogger.verbose(chalk.dim(`[verbose] Full repository scan: ${allFiles.length} file(s)`));
     }
 
     const entries: Array<{ file: string; patch: string }> = [];
@@ -253,27 +273,38 @@ class GitService {
       }
 
       try {
-        // --no-index returns exit code 1 when files differ, which is expected here.
-        await execFileAsync('git', ['-C', root, 'diff', '--no-index', '--', '/dev/null', relativeFile], {
-          maxBuffer: 16 * 1024 * 1024,
-        });
-      } catch (error: any) {
-        const out = typeof error?.stdout === 'string' ? error.stdout : '';
-        const patch = out.trim();
+        const patch = await this.getUntrackedFilePatch(relativeFile, root);
         if (!patch) continue;
-
-        if (patch.length > MAX_FILE_PATCH_CHARS) {
-          if (!this.verbose) {
-            console.log(chalk.yellow(`⚠ Skipping oversized file patch: ${relativeFile} (${patch.length.toLocaleString()} chars)`));
-          }
-          continue;
-        }
-
         entries.push({ file: relativeFile, patch });
+      } catch {
+        continue;
       }
     }
 
     return entries;
+  }
+
+  private async getUntrackedFilePatch(relativeFile: string, root: string): Promise<string | null> {
+    try {
+      // --no-index returns exit code 1 when files differ, which is expected here.
+      await execFileAsync('git', ['-C', root, 'diff', '--no-index', '--', '/dev/null', relativeFile], {
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      return null;
+    } catch (error: any) {
+      const out = typeof error?.stdout === 'string' ? error.stdout : '';
+      const patch = out.trim();
+      if (!patch) return null;
+
+        if (patch.length > MAX_FILE_PATCH_CHARS) {
+          if (!this.verbose) {
+            cliLogger.warn(chalk.yellow(`⚠ Skipping oversized file patch: ${relativeFile} (${patch.length.toLocaleString()} chars)`));
+          }
+          return null;
+        }
+
+      return patch;
+    }
   }
 
   async getModifiedFiles(): Promise<FileDiff[]> {
