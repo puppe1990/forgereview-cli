@@ -9,8 +9,9 @@ import { jsonFormatter } from '../formatters/json.js';
 import { markdownFormatter } from '../formatters/markdown.js';
 import { promptFormatter } from '../formatters/prompt.js';
 import { interactiveUI } from '../ui/interactive.js';
+import { fixService } from '../services/fix.service.js';
 import { codexReviewService } from '../services/codex-review.service.js';
-import type { GlobalOptions, OutputFormat, ReviewResult } from '../types/index.js';
+import type { GlobalOptions, OutputFormat, ReviewChunkTelemetry, ReviewIssue, ReviewResult } from '../types/index.js';
 import fs from 'fs/promises';
 
 type ReviewOptions = {
@@ -28,6 +29,7 @@ type ReviewOptions = {
   chunkMaxChars?: number;
   chunkTimeoutMs?: number;
   chunkWorkers?: number;
+  chunkMaxSplitDepth?: number;
 };
 
 interface ChunkEntry {
@@ -46,6 +48,21 @@ interface ChunkRunState {
   failedFiles: Set<string>;
   successfulChunks: number;
   failedChunks: number;
+  telemetry: ReviewChunkTelemetry[];
+}
+
+interface ChunkExecutionConfig {
+  spinner: Ora;
+  quiet: boolean;
+  verbose: boolean;
+  contextFile?: string;
+  fast: boolean;
+  rulesOnly: boolean;
+  timeoutMs: number;
+  workers: number;
+  allowPartial: boolean;
+  maxSplitDepth: number;
+  contextCache: Map<string, Promise<string>>;
 }
 
 export const reviewCommand = new Command('review')
@@ -65,9 +82,11 @@ export const reviewCommand = new Command('review')
   .option('--chunk-max-chars <n>', 'Max characters per full-review chunk', parsePositiveInt, 120000)
   .option('--chunk-timeout-ms <ms>', 'Timeout per chunk analysis in milliseconds', parsePositiveInt, 45000)
   .option('--chunk-workers <n>', 'Parallel workers for chunk analysis', parsePositiveInt, 1)
+  .option('--chunk-max-split-depth <n>', 'Max recursive split depth for failed chunks', parsePositiveInt, 8)
   .action(async (files: string[], options: ReviewOptions, cmd: Command) => {
     const globalOpts = cmd.optsWithGlobals() as GlobalOptions & { staged?: boolean; commit?: string };
     const spinner = ora();
+    const interactiveTty = isInteractiveTerminal();
 
     try {
       // Override format if --prompt-only is set
@@ -78,6 +97,14 @@ export const reviewCommand = new Command('review')
       if (options.full && (files?.length > 0 || options.branch || options.commit || options.staged)) {
         throw new Error('--full cannot be combined with files, --staged, --commit, or --branch');
       }
+
+      if (!interactiveTty && !globalOpts.output && globalOpts.format === 'terminal' && !options.promptOnly) {
+        globalOpts.format = 'json';
+        if (!globalOpts.quiet) {
+          console.error(chalk.yellow('⚠ Non-interactive shell detected. Falling back to JSON output (interactive UI disabled).'));
+        }
+      }
+
       if (!globalOpts.quiet) {
         spinner.start(chalk.cyan('Running with local Codex CLI...'));
       }
@@ -112,6 +139,7 @@ export const reviewCommand = new Command('review')
         failedFiles: new Set<string>(),
         successfulChunks: 0,
         failedChunks: 0,
+        telemetry: [],
       };
 
       await runChunks(scope.chunks, {
@@ -124,6 +152,8 @@ export const reviewCommand = new Command('review')
         timeoutMs: options.chunkTimeoutMs || 45000,
         workers: Math.max(1, options.chunkWorkers || 1),
         allowPartial: !!options.full,
+        maxSplitDepth: options.chunkMaxSplitDepth || 8,
+        contextCache: new Map<string, Promise<string>>(),
       }, runState);
 
       const result = mergeResults(runState, scope.totalFiles, scope.chunks.length, !!options.full);
@@ -132,6 +162,20 @@ export const reviewCommand = new Command('review')
 
       // Handle fix mode
       if (options.fix) {
+        if (!interactiveTty) {
+          const fixableIssues = result.issues.filter((issue) => issue.fixable && issue.fix);
+          if (!globalOpts.quiet) {
+            console.log(chalk.yellow(`⚠ Non-interactive shell detected. Applying ${fixableIssues.length} fix(es) without prompt.`));
+          }
+          const applyResult = await fixService.applyFixes(fixableIssues);
+          if (!globalOpts.quiet) {
+            console.log(chalk.green(`\n✓ Applied ${applyResult.applied} fixes`));
+            if (applyResult.failed > 0) {
+              console.log(chalk.yellow(`⚠ Failed to apply ${applyResult.failed} fixes`));
+            }
+          }
+          return;
+        }
         await interactiveUI.runQuickFix(result);
         return;
       }
@@ -139,9 +183,12 @@ export const reviewCommand = new Command('review')
       // Handle interactive mode (now default if no output format specified)
       const shouldUseInteractive = options.interactive || (!globalOpts.output && globalOpts.format === 'terminal');
 
-      if (shouldUseInteractive) {
+      if (shouldUseInteractive && interactiveTty) {
         await interactiveUI.run(result);
         return;
+      }
+      if (shouldUseInteractive && !interactiveTty && !globalOpts.quiet) {
+        console.log(chalk.yellow('⚠ Interactive review UI disabled in non-interactive shell. Printing formatted output instead.'));
       }
 
       // Regular output (only when --format or --output is specified)
@@ -284,17 +331,7 @@ function buildChunks(entries: ChunkEntry[], maxChars: number): ReviewChunk[] {
 
 async function runChunks(
   chunks: ReviewChunk[],
-  config: {
-    spinner: Ora;
-    quiet: boolean;
-    verbose: boolean;
-    contextFile?: string;
-    fast: boolean;
-    rulesOnly: boolean;
-    timeoutMs: number;
-    workers: number;
-    allowPartial: boolean;
-  },
+  config: ChunkExecutionConfig,
   state: ChunkRunState,
 ): Promise<void> {
   let cursor = 0;
@@ -306,7 +343,7 @@ async function runChunks(
       if (idx >= chunks.length) {
         return;
       }
-      await processChunk(chunks[idx], idx + 1, chunks.length, config, state);
+      await processChunk(chunks[idx], idx + 1, chunks.length, config, state, 0, 0);
     }
   };
 
@@ -317,24 +354,40 @@ async function processChunk(
   chunk: ReviewChunk,
   position: number,
   total: number,
-  config: {
-    spinner: Ora;
-    quiet: boolean;
-    verbose: boolean;
-    contextFile?: string;
-    fast: boolean;
-    rulesOnly: boolean;
-    timeoutMs: number;
-    allowPartial: boolean;
-  },
+  config: ChunkExecutionConfig,
   state: ChunkRunState,
+  splitDepth: number,
+  retries: number,
 ): Promise<void> {
+  const chunkId = chunk.entries.map((e) => e.file).join('|') || `chunk-${position}`;
   if (!config.quiet) {
-    config.spinner.text = chalk.cyan(`Analyzing chunk ${position}/${total}...`);
+    config.spinner.text = chalk.cyan(`Analyzing chunk ${position}/${total} (${chunk.entries.length || 1} file${(chunk.entries.length || 1) > 1 ? 's' : ''})...`);
+  }
+  if (config.verbose) {
+    console.log(chalk.dim(`[verbose] Chunk ${position}/${total} start: files=${chunk.entries.length || 0}, chars=${chunk.diff.length}, splitDepth=${splitDepth}, retries=${retries}`));
   }
 
+  const getEnrichedDiff = async (): Promise<string> => {
+    const cacheKey = `${config.contextFile || ''}\n${chunk.diff}`;
+    const cached = config.contextCache.get(cacheKey);
+    if (cached) {
+      if (config.verbose) {
+        console.log(chalk.dim(`[verbose] Context cache hit for chunk ${position}/${total}`));
+      }
+      return cached;
+    }
+    const promise = contextService
+      .enrichDiffWithContext(chunk.diff, config.contextFile, config.verbose)
+      .catch((error) => {
+        config.contextCache.delete(cacheKey);
+        throw error;
+      });
+    config.contextCache.set(cacheKey, promise);
+    return promise;
+  };
+
   const execute = async (forceFast: boolean): Promise<ReviewResult> => {
-    const enrichedDiff = await contextService.enrichDiffWithContext(chunk.diff, config.contextFile, config.verbose);
+    const enrichedDiff = await getEnrichedDiff();
     return codexReviewService.analyze(enrichedDiff, {
       verbose: config.verbose,
       fast: forceFast || config.fast,
@@ -343,17 +396,51 @@ async function processChunk(
     });
   };
 
+  const startedAt = Date.now();
   try {
     const result = await execute(false);
     state.results.push(result);
     state.successfulChunks += 1;
     for (const entry of chunk.entries) state.processedFiles.add(entry.file);
+    state.telemetry.push({
+      chunkId,
+      position,
+      total,
+      files: chunk.entries.length,
+      sizeChars: chunk.diff.length,
+      status: 'success',
+      durationMs: Date.now() - startedAt,
+      retries,
+      splitDepth,
+    });
+    if (config.verbose) {
+      console.log(chalk.dim(`[verbose] Chunk ${position}/${total} success in ${Date.now() - startedAt}ms`));
+    }
     return;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const timedOut = /timed out/i.test(message);
+    if (!config.quiet) {
+      const kind = timedOut ? 'timeout' : 'error';
+      console.log(chalk.yellow(`⚠ Chunk ${position}/${total} ${kind}: ${chunk.entries.length} file(s), splitDepth=${splitDepth}`));
+    }
 
-    if (chunk.entries.length > 1) {
+    if (chunk.entries.length > 1 && splitDepth < config.maxSplitDepth) {
+      state.telemetry.push({
+        chunkId,
+        position,
+        total,
+        files: chunk.entries.length,
+        sizeChars: chunk.diff.length,
+        status: 'split',
+        durationMs: Date.now() - startedAt,
+        retries,
+        splitDepth,
+        error: message.slice(0, 300),
+      });
+      if (!config.quiet) {
+        console.log(chalk.yellow(`↳ Splitting chunk ${position}/${total} into 2 subchunks (depth ${splitDepth + 1}/${config.maxSplitDepth})`));
+      }
       const mid = Math.floor(chunk.entries.length / 2);
       const left = chunk.entries.slice(0, mid);
       const right = chunk.entries.slice(mid);
@@ -363,6 +450,8 @@ async function processChunk(
         total,
         config,
         state,
+        splitDepth + 1,
+        retries,
       );
       await processChunk(
         { entries: right, diff: right.map(e => e.patch).join('\n\n') },
@@ -370,16 +459,32 @@ async function processChunk(
         total,
         config,
         state,
+        splitDepth + 1,
+        retries,
       );
       return;
     }
 
     if (timedOut && !config.fast) {
       try {
+        if (!config.quiet) {
+          console.log(chalk.yellow(`↳ Retrying chunk ${position}/${total} in fast mode`));
+        }
         const result = await execute(true);
         state.results.push(result);
         state.successfulChunks += 1;
         for (const entry of chunk.entries) state.processedFiles.add(entry.file);
+        state.telemetry.push({
+          chunkId,
+          position,
+          total,
+          files: chunk.entries.length,
+          sizeChars: chunk.diff.length,
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          retries: retries + 1,
+          splitDepth,
+        });
         return;
       } catch (retryError) {
         const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
@@ -388,6 +493,18 @@ async function processChunk(
         }
         state.failedChunks += 1;
         for (const entry of chunk.entries) state.failedFiles.add(entry.file);
+        state.telemetry.push({
+          chunkId,
+          position,
+          total,
+          files: chunk.entries.length,
+          sizeChars: chunk.diff.length,
+          status: /timed out/i.test(retryMessage) ? 'timeout' : 'failed',
+          durationMs: Date.now() - startedAt,
+          retries: retries + 1,
+          splitDepth,
+          error: retryMessage.slice(0, 300),
+        });
         if (config.verbose) {
           console.log(chalk.dim(`[verbose] Chunk failed after fast retry: ${chunk.entries[0]?.file || 'unknown'} - ${retryMessage}`));
         }
@@ -401,6 +518,18 @@ async function processChunk(
 
     state.failedChunks += 1;
     for (const entry of chunk.entries) state.failedFiles.add(entry.file);
+    state.telemetry.push({
+      chunkId,
+      position,
+      total,
+      files: chunk.entries.length,
+      sizeChars: chunk.diff.length,
+      status: timedOut ? 'timeout' : 'failed',
+      durationMs: Date.now() - startedAt,
+      retries,
+      splitDepth,
+      error: message.slice(0, 300),
+    });
     if (config.verbose) {
       console.log(chalk.dim(`[verbose] Chunk failed: ${chunk.entries[0]?.file || 'unknown'} - ${message}`));
     }
@@ -418,7 +547,8 @@ function mergeResults(state: ChunkRunState, totalFiles: number, chunkCount: numb
     duration += result.duration || 0;
     filesAnalyzed += result.filesAnalyzed || 0;
     for (const issue of result.issues) {
-      const key = `${issue.file}:${issue.line}:${issue.endLine || ''}:${issue.severity}:${issue.message}`;
+      const normalizedMessage = issue.message.toLowerCase().replace(/\s+/g, ' ').trim();
+      const key = `${issue.ruleId || ''}:${issue.file}:${issue.line}:${issue.endLine || ''}:${issue.severity}:${normalizedMessage}`;
       if (!seen.has(key)) {
         seen.add(key);
         issues.push(issue);
@@ -426,14 +556,24 @@ function mergeResults(state: ChunkRunState, totalFiles: number, chunkCount: numb
     }
   }
 
+  issues.sort((a, b) => {
+    const severityWeight = (s: ReviewIssue['severity']) => ({ critical: 0, error: 1, warning: 2, info: 3 }[s] ?? 9);
+    const sev = severityWeight(a.severity) - severityWeight(b.severity);
+    if (sev !== 0) return sev;
+    const fileCmp = a.file.localeCompare(b.file);
+    if (fileCmp !== 0) return fileCmp;
+    return a.line - b.line;
+  });
+
   if (isFull) {
     filesAnalyzed = Math.max(filesAnalyzed, state.processedFiles.size);
   }
 
   let summary = results[0]?.summary || 'Review completed';
+  const coverage = totalFiles > 0 ? Math.round((state.processedFiles.size / totalFiles) * 100) : 100;
+  const totalChunkRuns = Math.max(chunkCount, state.successfulChunks + state.failedChunks);
   if (chunkCount > 1 || isFull) {
-    const coverage = totalFiles > 0 ? Math.round((state.processedFiles.size / totalFiles) * 100) : 100;
-    summary = `Chunked full review completed (${state.successfulChunks}/${chunkCount} chunks succeeded, ${state.failedChunks} failed). Found ${issues.length} issue(s). Coverage: ${coverage}% (${state.processedFiles.size}/${totalFiles} files).`;
+    summary = `Chunked full review completed (${state.successfulChunks}/${totalChunkRuns} chunks succeeded, ${state.failedChunks} failed). Found ${issues.length} issue(s). Coverage: ${coverage}% (${state.processedFiles.size}/${totalFiles} files).`;
     if (state.failedFiles.size > 0) {
       summary += ` Failed files: ${Array.from(state.failedFiles).slice(0, 5).join(', ')}${state.failedFiles.size > 5 ? '...' : ''}.`;
     }
@@ -444,6 +584,20 @@ function mergeResults(state: ChunkRunState, totalFiles: number, chunkCount: numb
     issues,
     filesAnalyzed,
     duration,
+    meta: (chunkCount > 1 || isFull) ? {
+      chunkedReview: {
+        chunked: true,
+        totalChunks: totalChunkRuns,
+        successfulChunks: state.successfulChunks,
+        failedChunks: state.failedChunks,
+        totalFiles,
+        processedFiles: state.processedFiles.size,
+        failedFiles: Array.from(state.failedFiles).sort(),
+        coverage,
+        partial: state.failedChunks > 0,
+        telemetry: state.telemetry,
+      },
+    } : undefined,
   };
 }
 
@@ -453,6 +607,10 @@ function parsePositiveInt(value: string): number {
     throw new Error(`Invalid positive integer: ${value}`);
   }
   return parsed;
+}
+
+function isInteractiveTerminal(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
 function formatOutput(result: ReviewResult, format: OutputFormat): string {
@@ -468,3 +626,9 @@ function formatOutput(result: ReviewResult, format: OutputFormat): string {
       return terminalFormatter.format(result);
   }
 }
+
+export const __reviewInternals = {
+  buildChunks,
+  mergeResults,
+  isInteractiveTerminal,
+};

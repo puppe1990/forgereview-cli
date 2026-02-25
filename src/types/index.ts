@@ -72,6 +72,37 @@ export interface ReviewResult {
   issues: ReviewIssue[];
   filesAnalyzed: number;
   duration: number;
+  meta?: ReviewMeta;
+}
+
+export interface ReviewChunkTelemetry {
+  chunkId: string;
+  position?: number;
+  total?: number;
+  files: number;
+  sizeChars: number;
+  status: 'success' | 'failed' | 'timeout' | 'split';
+  durationMs: number;
+  retries?: number;
+  splitDepth?: number;
+  error?: string;
+}
+
+export interface ChunkedReviewMeta {
+  chunked: boolean;
+  totalChunks: number;
+  successfulChunks: number;
+  failedChunks: number;
+  totalFiles: number;
+  processedFiles: number;
+  failedFiles: string[];
+  coverage: number;
+  partial: boolean;
+  telemetry?: ReviewChunkTelemetry[];
+}
+
+export interface ReviewMeta {
+  chunkedReview?: ChunkedReviewMeta;
 }
 
 export interface ApiFileSuggestion {

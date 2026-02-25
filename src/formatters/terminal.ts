@@ -122,6 +122,14 @@ class TerminalFormatter {
     lines.push(`${chalk.dim('Summary:')} ${result.summary}`);
     lines.push(`${chalk.dim('Files analyzed:')} ${result.filesAnalyzed}`);
     lines.push(`${chalk.dim('Duration:')} ${result.duration}ms`);
+    if (result.meta?.chunkedReview) {
+      const meta = result.meta.chunkedReview;
+      lines.push(`${chalk.dim('Chunked review:')} ${meta.successfulChunks}/${meta.totalChunks} chunks succeeded`);
+      lines.push(`${chalk.dim('Coverage:')} ${meta.coverage}% (${meta.processedFiles}/${meta.totalFiles} files)`);
+      if (meta.failedFiles.length > 0) {
+        lines.push(`${chalk.dim('Failed files:')} ${meta.failedFiles.slice(0, 5).join(', ')}${meta.failedFiles.length > 5 ? '...' : ''}`);
+      }
+    }
     lines.push('');
 
     lines.push(formatSummary(result));
@@ -153,4 +161,3 @@ class TerminalFormatter {
 }
 
 export const terminalFormatter = new TerminalFormatter();
-

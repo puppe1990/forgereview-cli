@@ -85,6 +85,7 @@ forgereview review --interactive
 forgereview review --chunk-max-chars 120000
 forgereview review --chunk-timeout-ms 45000
 forgereview review --chunk-workers 2
+forgereview review --chunk-max-split-depth 8
 ```
 
 #### Flags
@@ -105,11 +106,14 @@ forgereview review --chunk-workers 2
 | `--chunk-max-chars <n>` | Max characters per full-review chunk |
 | `--chunk-timeout-ms <ms>` | Timeout per chunk analysis |
 | `--chunk-workers <n>` | Parallel workers for chunk analysis |
+| `--chunk-max-split-depth <n>` | Max recursive split depth for failed chunks |
 
 Notes:
 - `--full` cannot be combined with `files`, `--staged`, `--commit`, or `--branch`.
 - Very large repositories are split into multiple chunks automatically in full mode.
 - On chunk timeout/failure, ForgeReview splits chunks recursively and continues, returning partial results with coverage and failed files.
+- In non-interactive shells (pipe/CI), interactive UI is disabled automatically and output falls back to JSON when needed.
+- `--fix` in non-interactive shells applies fixable issues without an inquirer prompt.
 
 ## Other commands
 
@@ -156,6 +160,25 @@ forgereview auth logout
 forgereview upgrade
 ```
 
+## Development Loop (Local)
+
+Safe local loop for CLI development (no push, no releases).
+
+```bash
+npm run loop         # quick profile (lint + typecheck + build + review --fast)
+npm run loop:full    # full profile (adds tests + review --full chunked)
+npm run loop:fix     # quick profile + review --fix
+```
+
+Environment knobs:
+
+```bash
+MAX_ITERS=1 npm run loop:full   # run once
+SLEEP_SECS=5 npm run loop       # wait 5s between iterations
+FAIL_FAST=0 npm run loop        # keep looping even after failures
+REVIEW_TIMEOUT_MS=120000 npm run loop  # increase per-review timeout
+```
+
 ## Global options
 
 ```bash
@@ -171,6 +194,7 @@ forgereview --output <file>
 
 - `No changes to review`: there is no diff in the selected scope. Use another scope (`--staged`, `--branch`, `--commit`, `--full`).
 - `Not a git repository`: run inside a git repo or initialize one with `git init`.
+- `ERR_USE_AFTER_CLOSE`: fixed by non-TTY detection. If you still see it, run with `--format json` and update the CLI.
 - If local Codex analysis is slow on large repos, rerun with `--fast`, narrowed scope, or specific files.
 
 ## License
